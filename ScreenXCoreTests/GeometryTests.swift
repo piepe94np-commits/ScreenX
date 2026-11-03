@@ -13,6 +13,13 @@ struct GeometryTests {
         #expect(r == CGRect(x: 10, y: 780, width: 50, height: 20))
     }
 
+    @Test func toBottomLeftInvertsToTopLeft() {
+        let topLeft = CGRect(x: -300, y: 40, width: 640, height: 480)
+        let appKit = CoordinateSpace.toBottomLeft(topLeft, primaryHeight: 900)
+        #expect(appKit == CGRect(x: -300, y: 380, width: 640, height: 480))
+        #expect(CoordinateSpace.toTopLeft(appKit, primaryHeight: 900) == topLeft)
+    }
+
     @Test func rectFromDragAnyDirection() {
         let r = SelectionGeometry.rect(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 50, y: 40), square: false)
         #expect(r == CGRect(x: 50, y: 40, width: 50, height: 60))

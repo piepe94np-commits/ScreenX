@@ -11,4 +11,9 @@ public enum CoordinateSpace {
     public static func toTopLeft(_ r: CGRect, primaryHeight: CGFloat) -> CGRect {
         CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
     }
+
+    /// Umkehrung von `toTopLeft`: global oben links → AppKit-global (unten links).
+    public static func toBottomLeft(_ r: CGRect, primaryHeight: CGFloat) -> CGRect {
+        CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
+    }
 }
