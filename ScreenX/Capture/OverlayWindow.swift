@@ -81,7 +81,7 @@ class OverlayInputView: NSView {
     private static let spaceKeyCode: UInt16 = 49
 
     let display: DisplayInfo
-    var onEvent: (@MainActor (OverlayEvent, DisplayInfo) -> Void)?
+    final var onEvent: ((OverlayEvent, DisplayInfo) -> Void)?
     private let cursor: NSCursor
 
     init(display: DisplayInfo, cursor: NSCursor) {
