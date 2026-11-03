@@ -25,6 +25,8 @@ final class AppCoordinator {
 
     private(set) var hotkeyErrors: [CaptureMode: HotkeyError] = [:]
     private(set) var lastCapture: Capture?
+    /// Modus, dessen Kürzel gerade aufgenommen wird. Währenddessen sind alle globalen Kürzel abgemeldet.
+    private(set) var recordingMode: CaptureMode?
 
     private var storedSettings: AppSettings
     private let store: SettingsStore
@@ -32,8 +34,8 @@ final class AppCoordinator {
     private let overlay: OverlayController
     @ObservationIgnored private var quickAccess: QuickAccessController?
     @ObservationIgnored private var hotkeyCenter: HotkeyCenter?
-    /// Während ein Kürzel aufgenommen wird, sind alle globalen Kürzel abgemeldet.
-    @ObservationIgnored private var hotkeysSuspended = false
+    /// Der einzige lokale keyDown-Monitor des Kürzel-Rekorders.
+    @ObservationIgnored private var recordingMonitor: Any?
 
     init(store: SettingsStore = SettingsStore(defaults: .standard)) {
         self.store = store
@@ -60,19 +62,20 @@ final class AppCoordinator {
             return
         }
         let result: Capture?
-        switch mode {
-        case .area:
-            result = await overlay.selectArea()
-        case .window:
-            result = await overlay.selectWindow(shadow: settings.windowShadow)
-        case .fullscreen:
-            do {
+        do {
+            switch mode {
+            case .area:
+                result = try await overlay.selectArea()
+            case .window:
+                result = try await overlay.selectWindow(shadow: settings.windowShadow)
+            case .fullscreen:
                 result = try await captureFullscreen()
-            } catch {
-                report(error)
-                return
             }
+        } catch {
+            report(error)
+            return
         }
+        // `nil`: vom Benutzer abgebrochen.
         guard let result else { return }
         lastCapture = result
         quickAccess?.show(result)
@@ -88,7 +91,7 @@ final class AppCoordinator {
     private func captureFullscreen() async throws -> Capture {
         let displays = try await service.displays()
         let mouse = NSEvent.mouseLocation
-        guard let display = displays.first(where: { $0.frame.contains(mouse) }) ?? displays.first else {
+        guard let display = displays.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? displays.first else {
             throw CaptureError.displayNotFound
         }
         let image = try await service.captureDisplay(display.id)
@@ -109,19 +112,63 @@ final class AppCoordinator {
         settings.hotkeys = hotkeys
     }
 
-    /// Meldet alle globalen Kürzel ab, damit der Rekorder auch belegte Kürzel empfängt.
-    func suspendHotkeys() {
-        hotkeysSuspended = true
+    /// Nimmt das nächste Kürzel für `mode` auf. Eine laufende Aufnahme eines anderen Modus endet.
+    /// Die globalen Kürzel werden abgemeldet, damit auch das aktuelle Kürzel erneut aufgenommen werden kann.
+    func startRecording(_ mode: CaptureMode) {
+        removeRecordingMonitor()
+        recordingMode = mode
         hotkeyCenter?.unregisterAll()
+        recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleRecording(event)
+            return nil
+        }
     }
 
-    func resumeHotkeys() {
-        hotkeysSuspended = false
+    /// Beendet die Aufnahme (falls eine läuft) und meldet die Kürzel wieder an.
+    func stopRecording() {
+        removeRecordingMonitor()
+        guard recordingMode != nil else { return }
+        recordingMode = nil
         registerHotkeys()
     }
 
+    private func removeRecordingMonitor() {
+        if let recordingMonitor {
+            NSEvent.removeMonitor(recordingMonitor)
+            self.recordingMonitor = nil
+        }
+    }
+
+    /// Esc bricht ab; ein Kürzel braucht mindestens einen von ⌘⌥⌃ (⇧ allein genügt nicht).
+    private func handleRecording(_ event: NSEvent) {
+        guard let mode = recordingMode else { return }
+        if event.keyCode == Self.escapeKeyCode {
+            stopRecording()
+            return
+        }
+        let modifiers = Self.modifiers(from: event.modifierFlags)
+        guard !modifiers.isDisjoint(with: [.command, .option, .control]) else {
+            NSSound.beep()
+            return
+        }
+        // Erst setzen, dann beenden: so wird nur der neue Satz registriert.
+        setHotkey(KeyCombo(keyCode: UInt32(event.keyCode), modifiers: modifiers), for: mode)
+        stopRecording()
+    }
+
+    nonisolated private static let escapeKeyCode: UInt16 = 53
+
+    private static func modifiers(from flags: NSEvent.ModifierFlags) -> KeyModifiers {
+        var result: KeyModifiers = []
+        if flags.contains(.command) { result.insert(.command) }
+        if flags.contains(.option) { result.insert(.option) }
+        if flags.contains(.control) { result.insert(.control) }
+        if flags.contains(.shift) { result.insert(.shift) }
+        return result
+    }
+
     private func registerHotkeys() {
-        guard !hotkeysSuspended, let hotkeyCenter else { return }
+        guard recordingMode == nil, let hotkeyCenter else { return }
         hotkeyErrors = hotkeyCenter.register(settings.hotkeys)
         for (mode, error) in hotkeyErrors {
             Self.logger.error(

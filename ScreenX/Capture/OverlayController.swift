@@ -2,7 +2,8 @@ import AppKit
 import OSLog
 import ScreenXCore
 
-/// Steuert die Auswahl-Overlays für Bereich und Fenster. `nil` als Ergebnis bedeutet Abbruch.
+/// Steuert die Auswahl-Overlays für Bereich und Fenster. `nil` als Ergebnis bedeutet Abbruch,
+/// ein geworfener Fehler einen echten Fehlschlag.
 /// Die Continuation wird genau einmal fortgesetzt, die Overlays sind danach geschlossen.
 @MainActor
 final class OverlayController {
@@ -10,7 +11,7 @@ final class OverlayController {
 
     private let service: CaptureService
     private var isRunning = false
-    private var continuation: CheckedContinuation<Capture?, Never>?
+    private var continuation: CheckedContinuation<Capture?, any Error>?
     private var windows: [OverlayWindow] = []
 
     // Bereichsmodus
@@ -31,12 +32,12 @@ final class OverlayController {
 
     // MARK: - Bereich
 
-    func selectArea() async -> Capture? {
+    func selectArea() async throws -> Capture? {
         guard !isRunning else { return nil }
         isRunning = true
         defer { isRunning = false }
-        guard let displays = await freezeDisplays() else { return nil }
-        return await withCheckedContinuation { continuation in
+        let displays = try await freezeDisplays()
+        return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             for display in displays {
                 let view = AreaSelectionView(display: display, image: frozen[display.id])
@@ -51,7 +52,7 @@ final class OverlayController {
     }
 
     /// Friert alle Monitore parallel ein, bevor ein Overlay erscheint.
-    private func freezeDisplays() async -> [DisplayInfo]? {
+    private func freezeDisplays() async throws -> [DisplayInfo] {
         do {
             let displays = try await service.displays()
             guard !displays.isEmpty else { throw CaptureError.displayNotFound }
@@ -67,8 +68,9 @@ final class OverlayController {
             }
             return displays
         } catch {
+            frozen = [:]
             Self.logger.error("Einfrieren fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
-            return nil
+            throw error
         }
     }
 
@@ -120,7 +122,7 @@ final class OverlayController {
 
     // MARK: - Fenster
 
-    func selectWindow(shadow: Bool) async -> Capture? {
+    func selectWindow(shadow: Bool) async throws -> Capture? {
         guard !isRunning else { return nil }
         isRunning = true
         defer { isRunning = false }
@@ -128,10 +130,10 @@ final class OverlayController {
             candidates = try await service.windows()
         } catch {
             Self.logger.error("Fensterliste fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
-            return nil
+            throw error
         }
         self.shadow = shadow
-        return await withCheckedContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             for display in CaptureService.currentDisplays() {
                 let view = WindowHighlightView(display: display)
@@ -179,7 +181,7 @@ final class OverlayController {
                 finish(Capture(image: image, scale: scale, mode: .window, date: Date(), windowTitle: target.title))
             } catch {
                 Self.logger.error("Fensteraufnahme fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
-                finish(nil)
+                finish(.failure(error))
             }
         }
     }
@@ -221,10 +223,15 @@ final class OverlayController {
     }
 
     private func finish(_ capture: Capture?) {
+        finish(.success(capture))
+    }
+
+    /// Schließt die Overlays und setzt die Continuation genau einmal fort.
+    private func finish(_ result: Result<Capture?, any Error>) {
         closeWindows()
         guard let continuation else { return }
         self.continuation = nil
-        continuation.resume(returning: capture)
+        continuation.resume(with: result)
     }
 
     private func closeWindows() {
