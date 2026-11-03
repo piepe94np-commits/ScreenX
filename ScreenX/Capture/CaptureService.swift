@@ -40,7 +40,14 @@ actor CaptureService {
         guard let display = content.displays.first(where: { $0.displayID == id }) else {
             throw CaptureError.displayNotFound
         }
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        // Eigene Fenster (Schnellzugriff, Einstellungen, Hinweise) dürfen nie im Bild landen.
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let filter: SCContentFilter
+        if let own = content.applications.first(where: { $0.processID == ownPID }) {
+            filter = SCContentFilter(display: display, excludingApplications: [own], exceptingWindows: [])
+        } else {
+            filter = SCContentFilter(display: display, excludingWindows: [])
+        }
         let scale = CGFloat(filter.pointPixelScale)
         let config = SCStreamConfiguration()
         config.width = Int((CGFloat(display.width) * scale).rounded())
