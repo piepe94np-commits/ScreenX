@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Erklärt, dass die Freigabe für Bildschirmaufnahme fehlt, und öffnet die Systemeinstellungen.
-/// Es gibt höchstens ein Fenster gleichzeitig.
+/// Es gibt höchstens ein Fenster; nach dem Schließen wird dasselbe Fenster wieder gezeigt.
 @MainActor
 enum PermissionWindow {
     static let settingsURL = URL(
@@ -25,13 +25,6 @@ enum PermissionWindow {
         window.isReleasedWhenClosed = false
         window.center()
         self.window = window
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: window,
-            queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { PermissionWindow.window = nil }
-        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }
