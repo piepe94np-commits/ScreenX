@@ -1,0 +1,57 @@
+name: ScreenX
+options:
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+targets:
+  ScreenX:
+    type: application
+    platform: macOS
+    sources:
+      - ScreenX
+    settings:
+      base:
+        INFOPLIST_FILE: ScreenX/Resources/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.screenx.app
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: ScreenXCore
+        embed: true
+  ScreenXCore:
+    type: framework
+    platform: macOS
+    sources:
+      - ScreenXCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.screenx.core
+        GENERATE_INFOPLIST_FILE: YES
+  ScreenXCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - ScreenXCoreTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.screenx.core.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: ScreenXCore
+schemes:
+  ScreenX:
+    build:
+      targets:
+        ScreenX: all
+  ScreenXCore:
+    build:
+      targets:
+        ScreenXCore: all
+    test:
+      targets:
+        - ScreenXCoreTests

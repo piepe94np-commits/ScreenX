@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode-Version
+        run: |
+          ls /Applications | grep Xcode || true
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i macos
+      - name: XcodeGen installieren
+        run: brew install xcodegen
+      - name: Projekt generieren
+        run: xcodegen generate
+      - name: Build
+        run: xcodebuild build -scheme ScreenX -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+      - name: Tests
+        run: xcodebuild test -scheme ScreenXCore -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -resultBundlePath TestResults
+      - name: Ergebnisse hochladen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            TestResults.xcresult
+            ScreenXCoreTests/__Output__
+          if-no-files-found: ignore
