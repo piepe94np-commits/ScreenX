@@ -1,13 +1,22 @@
 {
   "sourceLanguage" : "de",
   "strings" : {
+    "Anheften" : {},
     "Aufnahme fehlgeschlagen: %@" : {},
+    "Bearbeiten" : {},
     "Beenden" : {},
     "Bildschirm nicht gefunden." : {},
     "Fenster nicht gefunden." : {},
+    "Gesichert" : {},
     "Keine Berechtigung für Bildschirmaufnahme." : {},
+    "Kopieren" : {},
+    "Kopiert" : {},
+    "Lösen" : {},
     "Nach dem Erteilen der Freigabe ScreenX neu starten." : {},
+    "Schließen" : {},
     "ScreenX braucht die Freigabe für Bildschirmaufnahme." : {},
+    "Sichern" : {},
+    "Sichern fehlgeschlagen" : {},
     "Systemeinstellungen öffnen" : {}
   },
   "version" : "1.0"
