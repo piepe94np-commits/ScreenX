@@ -44,7 +44,7 @@ final class OverlayController {
                 areaViews.append(view)
                 present(view, on: display, backdrop: frozen[display.id])
             }
-            activate()
+            focusPanel()
             pointer = NSEvent.mouseLocation
             refreshArea()
         }
@@ -139,7 +139,7 @@ final class OverlayController {
                 highlightViews.append(view)
                 present(view, on: display, backdrop: nil)
             }
-            activate()
+            focusPanel()
             hover(at: NSEvent.mouseLocation)
         }
     }
@@ -172,7 +172,7 @@ final class OverlayController {
         let shadow = shadow
         closeWindows()
         Task {
-            // Einen Runloop-Durchlauf warten, damit das Overlay nicht mit aufgenommen wird.
+            // Kurz (50 ms) warten, bis der Window Server die ausgeblendeten Overlays nicht mehr zeigt.
             try? await Task.sleep(for: .milliseconds(50))
             do {
                 let image = try await service.captureWindow(target.id, shadow: shadow)
@@ -211,10 +211,13 @@ final class OverlayController {
         windows.append(window)
     }
 
-    private func activate() {
-        NSApp.activate()
+    /// Macht das Panel unter dem Zeiger zum Key-Fenster, ohne die App zu aktivieren.
+    /// Bewusst kein `NSApp.activate()`: das würde die vorderste App deaktivieren (Fenster würden
+    /// inaktiv aufgenommen) und ScreenX bliebe danach aktiv, sodass Tastatureingaben ins Leere gehen.
+    /// `.nonactivatingPanel` mit `canBecomeKey` erhält Esc/Leertaste/⇧ trotzdem (wie Spotlight).
+    private func focusPanel() {
         let mouse = NSEvent.mouseLocation
-        (windows.first { $0.frame.contains(mouse) } ?? windows.first)?.makeKey()
+        (windows.first { $0.frame.contains(mouse) } ?? windows.first)?.makeKeyAndOrderFront(nil)
     }
 
     private func finish(_ capture: Capture?) {
@@ -229,6 +232,10 @@ final class OverlayController {
             window.orderOut(nil)
             window.close()
         }
+        // Geschlossene Panels bis zum nächsten Runloop-Durchlauf halten: `finish` läuft oft in
+        // deren eigenem keyDown/mouseUp, das noch auf dem Stack liegt.
+        let closed = windows
+        DispatchQueue.main.async { withExtendedLifetime(closed) {} }
         windows = []
         areaViews = []
         highlightViews = []
