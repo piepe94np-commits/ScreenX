@@ -18,7 +18,7 @@ struct CanvasView: View {
     var body: some View {
         GeometryReader { geo in
             let scale = pointsPerPixel(viewport: geo.size)
-            let size = CGSize(width: vm.canvasSize.width * scale, height: vm.canvasSize.height * scale)
+            let size = CGSize(width: vm.displaySize.width * scale, height: vm.displaySize.height * scale)
             ScrollView([.horizontal, .vertical]) {
                 canvas(size: size, scale: scale)
                     .frame(width: max(size.width + 2 * Self.margin, geo.size.width),
@@ -56,7 +56,12 @@ struct CanvasView: View {
             // Schachbrett nur innerhalb der Fläche: sichtbar, wo das Bild transparent ist.
             Image(nsImage: Self.checkerTile)
                 .resizable(resizingMode: .tile)
-            if let preview = vm.preview {
+            if vm.renderFailed {
+                Label("Das Bild konnte nicht erzeugt werden.", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+                    .padding(8)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+            } else if let preview = vm.preview {
                 Image(decorative: preview, scale: 1)
                     .resizable()
                     .interpolation(.high)
@@ -67,14 +72,15 @@ struct CanvasView: View {
             }
             AnnotationInteraction(
                 vm: vm, mapping: vm.canvasMapping(viewScale: scale), viewScale: scale,
-                annotations: vm.model.annotations, selection: vm.selection, tool: vm.tool)
+                annotations: vm.model.annotations, selection: vm.selection, tool: vm.tool,
+                editingTextID: vm.editingTextID, cropDraft: vm.cropDraft)
         }
         .frame(width: size.width, height: size.height)
     }
 
     /// Punkte je Pixel des Originals für die aktuelle Zoomstufe. Einpassen vergrößert nie über 100 %.
     private func pointsPerPixel(viewport: CGSize) -> CGFloat {
-        let canvas = vm.canvasSize
+        let canvas = vm.displaySize
         guard canvas.width > 0, canvas.height > 0 else { return 0 }
         let actualSize = 1 / vm.captureScale
         if let zoomPercent { return actualSize * CGFloat(zoomPercent) / 100 }

@@ -32,6 +32,7 @@ struct ToolOptionsBar: View {
             }
             Spacer(minLength: 0)
             if isSelection { arrangeButtons }
+            if vm.tool == .crop, !isSelection { cropButtons }
         }
         .font(.callout)
         .controlSize(.small)
@@ -46,7 +47,7 @@ struct ToolOptionsBar: View {
 
     private var hint: String {
         switch vm.tool {
-        case .crop: String(localized: "Rahmen ziehen, um das Bild zuzuschneiden.")
+        case .crop: String(localized: "Rahmen ziehen, um das Bild zuzuschneiden. ⇧ hält das Seitenverhältnis.")
         default: String(localized: "Anmerkung anklicken, um sie zu bearbeiten.")
         }
     }
@@ -389,6 +390,21 @@ struct ToolOptionsBar: View {
     }
 
     // MARK: - Ebenen
+
+    /// Größe des Rahmens, „Zurücksetzen“ (`crop = nil`) und „Fertig“ (wie ↩).
+    private var cropButtons: some View {
+        HStack(spacing: 8) {
+            if let draft = vm.cropDraft {
+                Text("\(Int(draft.width.rounded())) × \(Int(draft.height.rounded())) px")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Button("Zurücksetzen") { vm.resetCrop() }
+                .disabled(vm.model.crop == nil && vm.cropDraft == vm.originalBounds)
+            Button("Fertig") { vm.commitCrop() }
+                .buttonStyle(.borderedProminent)
+        }
+    }
 
     private var arrangeButtons: some View {
         HStack(spacing: 4) {

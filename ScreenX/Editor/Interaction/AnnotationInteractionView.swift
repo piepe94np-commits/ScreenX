@@ -3,8 +3,8 @@ import ScreenXCore
 import SwiftUI
 
 /// Legt die Interaktionsschicht exakt über die Vorschau der Arbeitsfläche.
-/// `annotations`, `selection` und `tool` sind nur Eingaben, damit SwiftUI die Schicht bei jeder Änderung
-/// auffrischt; die Ansicht liest den aktuellen Stand selbst aus dem ViewModel.
+/// `annotations`, `selection`, `tool`, `editingTextID` und `cropDraft` sind nur Eingaben, damit SwiftUI die
+/// Schicht bei jeder Änderung auffrischt; die Ansicht liest den aktuellen Stand selbst aus dem ViewModel.
 struct AnnotationInteraction: NSViewRepresentable {
     let vm: EditorViewModel
     let mapping: CanvasMapping
@@ -13,6 +13,8 @@ struct AnnotationInteraction: NSViewRepresentable {
     let annotations: [Annotation]
     let selection: Set<UUID>
     let tool: EditorTool
+    let editingTextID: UUID?
+    let cropDraft: CGRect?
 
     func makeNSView(context: Context) -> AnnotationInteractionView {
         AnnotationInteractionView(vm: vm, mapping: mapping, viewScale: viewScale)
@@ -22,12 +24,14 @@ struct AnnotationInteraction: NSViewRepresentable {
         view.vm = vm
         view.mapping = mapping
         view.viewScale = viewScale
+        view.syncTextEditor()
         view.needsDisplay = true
         view.refreshCursor()
     }
 }
 
-/// Maus und Tasten auf der Arbeitsfläche: Anmerkungen zeichnen, auswählen, verschieben, skalieren, drehen.
+/// Maus und Tasten auf der Arbeitsfläche: Anmerkungen zeichnen, auswählen, verschieben, skalieren, drehen,
+/// Text bearbeiten (`InlineTextEditor`, Doppelklick) und zuschneiden (`CropInteraction`).
 /// Koordinaten der Ansicht: Punkte mit Ursprung oben links, die Arbeitsfläche beginnt bei (0, 0).
 /// Jeder Zug ist genau ein Undo-Schritt (`DragOperation`).
 final class AnnotationInteractionView: NSView {
@@ -40,6 +44,8 @@ final class AnnotationInteractionView: NSView {
     var mapping: CanvasMapping
     var viewScale: CGFloat
     private var operation: DragOperation?
+    private var cropDrag: CropInteraction.Drag?
+    private let textEditor = InlineTextEditor()
     private var keyMonitor: KeyMonitor?
 
     init(vm: EditorViewModel, mapping: CanvasMapping, viewScale: CGFloat) {
@@ -64,10 +70,20 @@ final class AnnotationInteractionView: NSView {
     }
 
     private func interrupt() {
-        guard let operation else { return }
-        operation.cancel(vm: vm)
-        self.operation = nil
+        if let operation {
+            operation.cancel(vm: vm)
+            self.operation = nil
+        }
+        if let cropDrag {
+            vm.cropDraft = cropDrag.startRect
+            self.cropDrag = nil
+        }
         needsDisplay = true
+    }
+
+    /// Öffnet bzw. schließt das Textfeld passend zu `vm.editingTextID`.
+    func syncTextEditor() {
+        textEditor.sync(in: self, vm: vm, mapping: mapping, viewScale: viewScale)
     }
 
     override var isFlipped: Bool { true }
@@ -99,6 +115,18 @@ final class AnnotationInteractionView: NSView {
               !(window.firstResponder is NSText)
         else { return false }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+
+        if vm.tool == .crop {
+            if event.keyCode == KeyCode.escape, flags.isEmpty {
+                if cropDrag != nil { interrupt() } else { vm.discardCrop() }
+                return true
+            }
+            if KeyCode.returnKeys.contains(event.keyCode), flags.isEmpty, cropDrag == nil {
+                vm.commitCrop()
+                return true
+            }
+            return false
+        }
 
         if event.keyCode == KeyCode.escape, flags.isEmpty {
             if let operation {
@@ -163,16 +191,38 @@ final class AnnotationInteractionView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        guard operation == nil, vm.tool != .crop else { return }
+        // Ein Klick neben das Textfeld übernimmt den Text (und tut sonst nichts).
+        if vm.editingTextID != nil {
+            vm.endTextEditing(commit: true)
+            syncTextEditor()
+            needsDisplay = true
+            return
+        }
+        guard operation == nil, cropDrag == nil else { return }
         let inView = viewPoint(event)
         let p = mapping.toOriginal(inView)
         let shift = event.modifierFlags.contains(.shift)
+
+        if vm.tool == .crop {
+            cropMouseDown(at: p, inView: inView, clickCount: event.clickCount)
+            return
+        }
 
         if !vm.isReadOnly, let hit = handleHit(at: inView) {
             let (handle, target) = hit
             let kind: DragOperation.Kind = handle == .rotate ? .rotate(target) : .resize(handle, target)
             operation = DragOperation(kind, at: p, inView: inView, vm: vm)
             refreshCursor(at: inView)
+            return
+        }
+
+        // Doppelklick (Auswahl) bzw. Klick mit dem Text- oder Notizwerkzeug auf einen Text oder eine Notiz:
+        // bearbeiten.
+        let editsText = (vm.tool == .select && event.clickCount == 2) || vm.tool == .text || vm.tool == .note
+        if !vm.isReadOnly, editsText, let id = textAnnotation(at: p) {
+            vm.beginTextEditing(id, isNew: false)
+            syncTextEditor()
+            needsDisplay = true
             return
         }
 
@@ -209,26 +259,71 @@ final class AnnotationInteractionView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard operation != nil else { return }
         let inView = viewPoint(event)
+        if let cropDrag {
+            vm.cropDraft = cropDrag.rect(to: mapping.toOriginal(inView), shift: event.modifierFlags.contains(.shift),
+                                         bounds: vm.originalBounds)
+            needsDisplay = true
+            return
+        }
+        guard operation != nil else { return }
         operation?.update(to: mapping.toOriginal(inView), inView: inView,
                           shift: event.modifierFlags.contains(.shift), vm: vm)
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
+        let inView = viewPoint(event)
+        if cropDrag != nil {
+            cropDrag = nil
+            needsDisplay = true
+            refreshCursor(at: inView)
+            return
+        }
         guard let operation else { return }
         self.operation = nil
-        let inView = viewPoint(event)
         operation.finish(at: mapping.toOriginal(inView), inView: inView, vm: vm)
+        syncTextEditor()
         needsDisplay = true
+        refreshCursor(at: inView)
+    }
+
+    /// Oberste Text- bzw. Notiz-Anmerkung unter `p` (Pixel des Originals).
+    private func textAnnotation(at p: CGPoint) -> UUID? {
+        let tolerance = Self.hitTolerance / max(viewScale, 0.0001)
+        guard let id = AnnotationGeometry.hitTest(p, in: vm.model.annotations, tolerance: tolerance),
+              let annotation = vm.model.annotations.first(where: { $0.id == id }),
+              AnnotationTextLayout.textRect(of: annotation) != nil
+        else { return nil }
+        return id
+    }
+
+    /// Zuschnitt: Griff, Rahmen verschieben oder neuen Rahmen aufziehen; Doppelklick in den Rahmen übernimmt.
+    private func cropMouseDown(at p: CGPoint, inView: CGPoint, clickCount: Int) {
+        guard !vm.isReadOnly, let draft = vm.cropDraft else { return }
+        let part = CropInteraction.part(at: inView, draft: draft, mapping: mapping)
+        if clickCount == 2, part == .move {
+            vm.commitCrop()
+            return
+        }
+        cropDrag = CropInteraction.Drag(part: part, startRect: draft, start: p)
         refreshCursor(at: inView)
     }
 
     // MARK: - Zeichnen
 
     override func draw(_ dirtyRect: NSRect) {
-        let selected = vm.model.annotations.filter { vm.selection.contains($0.id) }
+        if vm.tool == .crop {
+            guard let draft = vm.cropDraft else { return }
+            let layout = vm.displayLayout
+            let rect = layout.imageRect
+            let radius = max(0, min(CGFloat(vm.model.style.cornerRadius), min(rect.width, rect.height) / 2))
+            CropInteraction.draw(draft: draft, bounds: vm.originalBounds, mapping: mapping,
+                                 imageCornerRadius: radius * viewScale)
+            return
+        }
+        // Die gerade bearbeitete Anmerkung zeigt statt der Auswahl ihr Textfeld.
+        let selected = vm.model.annotations.filter { vm.selection.contains($0.id) && $0.id != vm.editingTextID }
         guard !selected.isEmpty || operation?.marqueeRectInView != nil else { return }
         SelectionOverlayLayer(selected: selected, mapping: mapping, marquee: operation?.marqueeRectInView).draw()
     }
@@ -257,6 +352,13 @@ final class AnnotationInteractionView: NSView {
 
     /// Größenänderung über Griffen, Fadenkreuz bei Zeichenwerkzeugen, sonst Pfeil.
     private func cursor(at point: CGPoint) -> NSCursor {
+        if vm.tool == .crop {
+            if let cropDrag { return CropInteraction.cursor(for: cropDrag.part, dragging: true) }
+            guard let draft = vm.cropDraft, !vm.isReadOnly else { return .arrow }
+            return CropInteraction.cursor(for: CropInteraction.part(at: point, draft: draft, mapping: mapping),
+                                          dragging: false)
+        }
+        if textEditor.contains(point) { return .iBeam }
         if case .rotate = operation?.kind { return .closedHand }
         if !vm.isReadOnly, let hit = handleHit(at: point) {
             let (handle, target) = hit
@@ -294,6 +396,8 @@ private enum KeyCode {
     static let delete: UInt16 = 51
     static let forwardDelete: UInt16 = 117
     static let escape: UInt16 = 53
+    /// ↩ und ↩ auf dem Ziffernblock.
+    static let returnKeys: Set<UInt16> = [36, 76]
     static let left: UInt16 = 123
     static let right: UInt16 = 124
     static let down: UInt16 = 125

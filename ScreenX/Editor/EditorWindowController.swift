@@ -190,8 +190,23 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func exportImageAs(_ sender: Any?) { viewModel.exportAs(settings: viewModel.settingsProvider()) }
     // Eigene Selektoren der Menüpunkte: Kein AppKit- oder SwiftUI-Responder kennt sie, also erreichen sie
     // sicher diesen Controller (Fenster-Delegate), der offene Farbänderungen vor Undo/Redo abschließt.
-    @objc func editorUndo(_ sender: Any?) { viewModel.undo() }
-    @objc func editorRedo(_ sender: Any?) { viewModel.redo() }
+    // Im Textfeld auf der Arbeitsfläche gilt dessen eigenes Undo fürs Tippen.
+    @objc func editorUndo(_ sender: Any?) {
+        if let typing = typingUndoManager { typing.undo() } else { viewModel.undo() }
+    }
+
+    @objc func editorRedo(_ sender: Any?) {
+        if let typing = typingUndoManager { typing.redo() } else { viewModel.redo() }
+    }
+
+    /// Eigenes Undo eines Textfelds mit Fokus (Textbearbeitung auf der Arbeitsfläche), sonst `nil`.
+    /// Felder des Inspektors nutzen das Undo des Fensters und laufen über das ViewModel.
+    private var typingUndoManager: UndoManager? {
+        guard let text = window?.firstResponder as? NSTextView, text.allowsUndo,
+              let manager = text.undoManager, manager !== undoStack
+        else { return nil }
+        return manager
+    }
 
     /// Kopiert das gerenderte Bild; ist in einem Textfeld Text markiert, wird dieser kopiert.
     @objc func editorCopy(_ sender: Any?) {
@@ -207,11 +222,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case #selector(saveProject(_:)), #selector(saveProjectAs(_:)):
             return !viewModel.isReadOnly
         case #selector(editorUndo(_:)):
-            menuItem.title = undoStack.undoMenuItemTitle
-            return undoStack.canUndo || viewModel.hasPendingEdit
+            let manager = typingUndoManager ?? undoStack
+            menuItem.title = manager.undoMenuItemTitle
+            return manager.canUndo || (manager === undoStack && viewModel.hasPendingEdit)
         case #selector(editorRedo(_:)):
-            menuItem.title = undoStack.redoMenuItemTitle
-            return undoStack.canRedo
+            let manager = typingUndoManager ?? undoStack
+            menuItem.title = manager.redoMenuItemTitle
+            return manager.canRedo
         default:
             return true
         }

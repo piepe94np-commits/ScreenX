@@ -124,15 +124,17 @@ struct DragOperation {
                     cancel(vm: vm)
                     return
                 }
+                if tool == .text || tool == .note {
+                    // Der Schritt bleibt offen: Hinzufügen und Text werden ein Undo-Schritt der Bearbeitung.
+                    vm.beginTextEditing(id, isNew: true)
+                    return
+                }
                 vm.endContinuousChange(Self.addActionName(tool))
-                guard vm.model.annotations.contains(where: { $0.id == id }) else { return }
                 vm.select(id, extend: false)
-                if tool == .text || tool == .note { vm.editingTextID = id }
             } else if let annotation = Self.makeDefaultAnnotation(tool, id: id, at: p, settings: settings) {
-                vm.apply(Self.addActionName(tool)) { $0.annotations.append(annotation) }
-                guard vm.model.annotations.contains(where: { $0.id == id }) else { return }
-                vm.select(id, extend: false)
-                vm.editingTextID = id
+                vm.beginContinuousChange()
+                vm.applyLive { $0.annotations.append(annotation) }
+                vm.beginTextEditing(id, isNew: true)
             }
         case let .counter(annotation):
             // Ein Klick setzt den Zähler genau auf den Klickpunkt.

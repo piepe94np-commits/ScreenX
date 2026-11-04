@@ -7,10 +7,7 @@ import Foundation
 public enum AnnotationRenderer {
     static let textBackgroundPadding: CGFloat = 6
     static let textBackgroundRadius: CGFloat = 6
-    static let notePadding: CGFloat = 16
     static let noteRadius: CGFloat = 4
-    static let noteFontSize: CGFloat = 15
-    static let noteTextColor = ColorValue(hex: "#3A2F00")!
     static let highlightOpacity: Double = 0.4
 
     /// Draws `annotations` in array order (last on top).
@@ -98,9 +95,10 @@ public enum AnnotationRenderer {
         case let .shape(kind, rect, filled):
             drawShape(kind, rect: rect, filled: filled, in: ctx)
 
-        case let .text(frame, string, fontSize, bold, background):
+        case let .text(frame, string, _, _, background):
             let frame = frame.standardized
-            let font = systemFont(size: CGFloat(fontSize), bold: bold)
+            guard let style = AnnotationTextLayout.textStyle(of: a, originalScale: originalScale) else { return }
+            let font = systemFont(size: style.fontSize, bold: style.bold)
             let textHeight = measure(string, font: font, width: frame.width).height
             if let background {
                 let box = CGRect(x: frame.minX, y: frame.minY, width: frame.width,
@@ -124,9 +122,10 @@ public enum AnnotationRenderer {
             ctx.addPath(shape)
             ctx.fillPath()
             ctx.restoreGState()
-            let font = systemFont(size: noteFontSize * max(originalScale, 0.01), bold: false)
-            drawText(string, font: font, color: noteTextColor.cgColor,
-                     in: frame.insetBy(dx: notePadding, dy: notePadding), ctx: ctx)
+            guard let style = AnnotationTextLayout.textStyle(of: a, originalScale: originalScale),
+                  let textRect = AnnotationTextLayout.textRect(of: a) else { return }
+            drawText(string, font: systemFont(size: style.fontSize, bold: style.bold), color: style.color.cgColor,
+                     in: textRect, ctx: ctx)
 
         case let .counter(center, number, radius):
             let r = CGFloat(radius)
@@ -179,24 +178,15 @@ public enum AnnotationRenderer {
     // MARK: Text
 
     static func systemFont(size: CGFloat, bold: Bool) -> CTFont {
-        CTFontCreateUIFontForLanguage(bold ? .emphasizedSystem : .system, max(size, 1), nil)
-            ?? CTFontCreateWithName("Helvetica" as CFString, max(size, 1), nil)
+        AnnotationTextLayout.systemFont(size: size, bold: bold)
     }
 
     private static func attributed(_ string: String, font: CTFont, color: CGColor) -> CFAttributedString {
-        NSAttributedString(string: string, attributes: [
-            NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
-        ]) as CFAttributedString
+        AnnotationTextLayout.attributed(string, font: font, color: color)
     }
 
-    /// Size of `string` wrapped to `width`.
     static func measure(_ string: String, font: CTFont, width: CGFloat) -> CGSize {
-        let framesetter = CTFramesetterCreateWithAttributedString(
-            attributed(string, font: font, color: CGColor(gray: 0, alpha: 1)))
-        return CTFramesetterSuggestFrameSizeWithConstraints(
-            framesetter, CFRange(location: 0, length: 0), nil,
-            CGSize(width: max(width, 1), height: .greatestFiniteMagnitude), nil)
+        AnnotationTextLayout.measure(string, font: font, width: width)
     }
 
     /// Lays `string` out from the top of `frame`, wrapped to its width. Text taller than the frame

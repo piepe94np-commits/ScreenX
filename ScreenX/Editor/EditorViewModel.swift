@@ -40,18 +40,30 @@ final class EditorViewModel {
     let isReadOnly: Bool
     var isDirty = false
     private(set) var preview: CGImage?
+    /// Das letzte Rendern des aktuellen Stands ist fehlgeschlagen (statt endlos zu laden, zeigt die Fläche
+    /// einen Fehler).
+    private(set) var renderFailed = false
     private(set) var canUndo = false
     private(set) var canRedo = false
     /// Kurze Rückmeldung wie „Kopiert“, verschwindet nach kurzer Zeit.
     private(set) var notice: String?
-    /// Aktives Werkzeug dieses Fensters.
-    var tool: EditorTool = .select
+    /// Aktives Werkzeug dieses Fensters. Ein Wechsel übernimmt eine offene Textbearbeitung;
+    /// mit dem Zuschnitt-Werkzeug zeigt die Fläche das ganze Original.
+    var tool: EditorTool = .select {
+        didSet { toolDidChange(from: oldValue) }
+    }
     /// IDs der ausgewählten Anmerkungen. Die Auswahl ist kein Teil des Dokuments und kein Undo-Schritt;
     /// IDs, die es nach Undo/Redo nicht mehr gibt, fallen heraus.
     var selection: Set<UUID> = []
-    /// Text- bzw. Notiz-Anmerkung, deren Text bearbeitet werden soll (gesetzt beim Erzeugen per Klick
-    /// oder Ziehen); die Textbearbeitung über der Arbeitsfläche öffnet sich dafür und setzt sie zurück.
-    var editingTextID: UUID?
+    /// Text- bzw. Notiz-Anmerkung, deren Text gerade über der Arbeitsfläche bearbeitet wird
+    /// (`beginTextEditing` … `endTextEditing`). Die Vorschau zeichnet ihren Text so lange nicht,
+    /// das Textfeld darüber zeigt ihn.
+    private(set) var editingTextID: UUID? {
+        didSet { if editingTextID != oldValue { scheduleRender() } }
+    }
+    /// Rahmen des Zuschnitt-Werkzeugs in Pixeln des Originals, nur solange es aktiv ist.
+    /// Erst „Fertig“ bzw. ↩ übernimmt ihn als `crop`.
+    var cropDraft: CGRect?
 
     @ObservationIgnored var undoManager: UndoManager? {
         didSet { refreshUndoState() }
@@ -64,6 +76,10 @@ final class EditorViewModel {
     @ObservationIgnored var dragFolder: URL?
 
     @ObservationIgnored private var continuousStart: Snapshot?
+    /// Die bearbeitete Anmerkung entstand gerade erst (ihr Hinzufügen gehört zum Schritt der Bearbeitung).
+    @ObservationIgnored private var textEditIsNew = false
+    /// Rahmenhöhe zu Beginn der Bearbeitung; der Rahmen wächst mit dem Text, aber nie darunter.
+    @ObservationIgnored private var textEditStartHeight: CGFloat = 0
     /// `isDirty` zu Beginn des offenen Schritts: bleibt das Modell unverändert, gilt er wieder.
     @ObservationIgnored private var continuousStartDirty = false
     /// Bricht einen laufenden Mauszug ab (gesetzt von der Interaktionsschicht), z. B. vor Undo/Redo.
@@ -119,18 +135,39 @@ final class EditorViewModel {
         return CanvasLayout.compute(contentSize: content, style: model.style)
     }
 
-    /// Größe der Arbeitsfläche in Pixeln des Originals.
+    /// Größe der Arbeitsfläche in Pixeln des Originals (wie exportiert).
     var canvasSize: CGSize { canvasLayout.canvasSize }
 
-    /// Abbildung zwischen Ansichtspunkten der Arbeitsfläche und Pixeln des Originals.
-    /// `viewScale` sind Ansichtspunkte je Pixel der Arbeitsfläche.
-    func canvasMapping(viewScale: CGFloat) -> CanvasMapping {
-        CanvasMapping(layout: canvasLayout, crop: model.crop, viewScale: viewScale)
+    /// Das ganze Original in seinen Pixeln.
+    var originalBounds: CGRect { CGRect(x: 0, y: 0, width: original.width, height: original.height) }
+
+    /// Der angezeigte Zuschnitt: beim Zuschnitt-Werkzeug keiner (die Fläche zeigt das ganze Original).
+    private var displayCrop: CGRect? { tool == .crop ? nil : model.crop }
+
+    /// Aufteilung der angezeigten Arbeitsfläche (mit `displayCrop`).
+    var displayLayout: CanvasLayout {
+        CanvasLayout.compute(contentSize: displayCrop?.size ?? originalBounds.size, style: model.style)
     }
 
-    private var renderInput: RenderInput {
-        RenderInput(original: original, crop: model.crop, style: model.style, backgroundImage: backgroundImage,
-                    annotations: model.annotations, originalScale: captureScale)
+    /// Größe der angezeigten Arbeitsfläche in Pixeln.
+    var displaySize: CGSize { displayLayout.canvasSize }
+
+    /// Abbildung zwischen Ansichtspunkten der angezeigten Arbeitsfläche und Pixeln des Originals.
+    /// `viewScale` sind Ansichtspunkte je Pixel der Arbeitsfläche.
+    func canvasMapping(viewScale: CGFloat) -> CanvasMapping {
+        CanvasMapping(layout: displayLayout, crop: displayCrop, viewScale: viewScale)
+    }
+
+    /// Eingabe für Export (`preview == false`) bzw. Vorschau: Die Vorschau nutzt `displayCrop` und
+    /// lässt den Text der gerade bearbeiteten Anmerkung weg.
+    private func renderInput(preview: Bool) -> RenderInput {
+        var annotations = model.annotations
+        if preview, let id = editingTextID, let index = annotations.firstIndex(where: { $0.id == id }) {
+            annotations[index] = Self.withText(annotations[index], "", height: nil)
+        }
+        return RenderInput(original: original, crop: preview ? displayCrop : model.crop, style: model.style,
+                           backgroundImage: backgroundImage, annotations: annotations,
+                           originalScale: captureScale)
     }
 
     private var snapshot: Snapshot {
@@ -142,6 +179,9 @@ final class EditorViewModel {
 
     func apply(_ actionName: String, _ change: (inout DocumentModel) -> Void) {
         guard !isReadOnly else { return }
+        // Während der Textbearbeitung (z. B. Schriftgröße in der Optionsleiste) gehört jede Änderung
+        // zu deren Undo-Schritt.
+        if editingTextID != nil, continuousStart != nil { return applyLive(change) }
         flushPendingEdit()
         let before = snapshot
         var updated = model
@@ -194,8 +234,9 @@ final class EditorViewModel {
 
     /// Registriert genau einen Undo-Schritt für den ganzen Reglerzug (falls sich etwas geändert hat).
     /// Ist das Modell am Ende wieder wie am Anfang, gilt auch der Änderungszustand von damals.
+    /// Während der Textbearbeitung zählt nur deren Ende (Regler gehören zu ihrem Schritt).
     func endContinuousChange(_ actionName: String) {
-        guard let start = continuousStart else { return }
+        guard editingTextID == nil, let start = continuousStart else { return }
         continuousStart = nil
         pendingEditName = nil
         defer { refreshUndoState() }
@@ -220,9 +261,6 @@ final class EditorViewModel {
         refreshUndoState()
     }
 
-    /// Ein Zug oder Reglerzug läuft (ohne die zeitgesteuerten Schritte des Farbfensters).
-    var isChangingContinuously: Bool { continuousStart != nil && pendingEditName == nil }
-
     func setBackgroundImage(data: Data, ext: String) throws {
         guard !isReadOnly else { return }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -238,9 +276,11 @@ final class EditorViewModel {
         commit(from: before, String(localized: "Hintergrundbild"))
     }
 
-    /// Bricht zuerst einen laufenden Zug ab; während eines Reglerzugs passiert nichts.
+    /// Bricht zuerst einen laufenden Zug ab und übernimmt eine offene Textbearbeitung;
+    /// während eines Reglerzugs passiert nichts.
     func undo() {
         interruptInteraction?()
+        endTextEditing(commit: true)
         flushPendingEdit()
         guard continuousStart == nil else { return }
         undoManager?.undo()
@@ -248,6 +288,7 @@ final class EditorViewModel {
 
     func redo() {
         interruptInteraction?()
+        endTextEditing(commit: true)
         flushPendingEdit()
         guard continuousStart == nil else { return }
         undoManager?.redo()
@@ -281,7 +322,139 @@ final class EditorViewModel {
         backgroundData = state.backgroundData
         backgroundExtension = state.backgroundExtension
         pruneSelection()
+        if tool == .crop { cropDraft = CropGeometry.initialRect(crop: model.crop, bounds: originalBounds) }
         commit(from: current, actionName)
+    }
+
+    // MARK: - Textbearbeitung
+
+    /// Öffnet die Textbearbeitung für eine Text- oder Notiz-Anmerkung und wählt sie aus.
+    /// `isNew`: Sie wurde gerade in einem noch offenen Schritt (`beginContinuousChange`) hinzugefügt;
+    /// Hinzufügen und Text werden dann ein Undo-Schritt, Abbrechen entfernt sie ohne Spur in der Historie.
+    func beginTextEditing(_ id: UUID, isNew: Bool) {
+        guard !isReadOnly, editingTextID != id,
+              let annotation = model.annotations.first(where: { $0.id == id }),
+              let frame = Self.textFrame(of: annotation)
+        else { return }
+        endTextEditing(commit: true)
+        beginContinuousChange()
+        textEditIsNew = isNew
+        textEditStartHeight = frame.height
+        selection = [id]
+        editingTextID = id
+        updateEditingText(Self.text(of: annotation) ?? "")
+    }
+
+    /// Übernimmt den getippten Text live; die Rahmenhöhe wächst mit dem Inhalt (Core-Text-Messung wie
+    /// beim Rendern).
+    func updateEditingText(_ string: String) {
+        guard let id = editingTextID else { return }
+        let scale = captureScale
+        let minimumHeight = textEditStartHeight
+        applyLive { model in
+            guard let index = model.annotations.firstIndex(where: { $0.id == id }) else { return }
+            let annotation = model.annotations[index]
+            let needed = AnnotationTextLayout.requiredFrameHeight(of: annotation, string: string,
+                                                                  originalScale: scale) ?? 0
+            model.annotations[index] = Self.withText(annotation, string, height: max(minimumHeight, needed))
+        }
+    }
+
+    /// Schließt die Textbearbeitung. `commit`: ein Undo-Schritt („Text bearbeiten“ bzw. für neue
+    /// „Text/Notiz hinzufügen“); leerer Text löscht die Anmerkung (eine neue verschwindet spurlos).
+    /// Ohne `commit` (Esc) bleibt alles wie vor der Bearbeitung.
+    func endTextEditing(commit: Bool) {
+        guard let id = editingTextID else { return }
+        editingTextID = nil
+        let annotation = model.annotations.first { $0.id == id }
+        let string = annotation.flatMap(Self.text(of:)) ?? ""
+        let isEmpty = string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard commit, !(textEditIsNew && isEmpty) else {
+            cancelContinuousChange()
+            return
+        }
+        if annotation != nil, isEmpty {
+            applyLive { $0.annotations.removeAll { $0.id == id } }
+            selection.remove(id)
+            endContinuousChange(String(localized: "Löschen"))
+        } else if textEditIsNew, let annotation {
+            if case .note = annotation.kind {
+                endContinuousChange(DragOperation.addActionName(.note))
+            } else {
+                endContinuousChange(DragOperation.addActionName(.text))
+            }
+        } else {
+            endContinuousChange(String(localized: "Text bearbeiten"))
+        }
+    }
+
+    private static func textFrame(of a: Annotation) -> CGRect? {
+        switch a.kind {
+        case let .text(frame, _, _, _, _), let .note(frame, _, _): frame.standardized
+        default: nil
+        }
+    }
+
+    private static func text(of a: Annotation) -> String? {
+        switch a.kind {
+        case let .text(_, string, _, _, _), let .note(_, string, _): string
+        default: nil
+        }
+    }
+
+    /// Text bzw. Notiz mit neuem Text und (falls angegeben) neuer Rahmenhöhe; andere Arten unverändert.
+    private static func withText(_ a: Annotation, _ string: String, height: CGFloat?) -> Annotation {
+        var result = a
+        switch a.kind {
+        case let .text(frame, _, fontSize, bold, background):
+            var frame = frame.standardized
+            if let height { frame.size.height = height }
+            result.kind = .text(frame: frame, string: string, fontSize: fontSize, bold: bold, background: background)
+        case let .note(frame, _, noteColor):
+            var frame = frame.standardized
+            if let height { frame.size.height = height }
+            result.kind = .note(frame: frame, string: string, noteColor: noteColor)
+        default:
+            break
+        }
+        return result
+    }
+
+    // MARK: - Zuschnitt
+
+    private func toolDidChange(from old: EditorTool) {
+        guard tool != old else { return }
+        endTextEditing(commit: true)
+        if tool == .crop {
+            interruptInteraction?()
+            selection = []
+            cropDraft = CropGeometry.initialRect(crop: model.crop, bounds: originalBounds)
+        } else if old == .crop {
+            interruptInteraction?()
+            cropDraft = nil
+        }
+        if tool == .crop || old == .crop { scheduleRender() }
+    }
+
+    /// „Fertig“ bzw. ↩: übernimmt den Rahmen als einen Undo-Schritt und verlässt das Werkzeug.
+    func commitCrop() {
+        guard tool == .crop, let draft = cropDraft else { return }
+        let crop = CropGeometry.committed(draft, bounds: originalBounds)
+        apply(String(localized: "Zuschneiden")) { $0.crop = crop }
+        tool = .select
+    }
+
+    /// Esc: verwirft den Rahmen und verlässt das Werkzeug.
+    func discardCrop() {
+        guard tool == .crop else { return }
+        tool = .select
+    }
+
+    /// „Zurücksetzen“: entfernt den Zuschnitt (`crop = nil`, ein Undo-Schritt); der Rahmen umfasst
+    /// wieder das ganze Original.
+    func resetCrop() {
+        apply(String(localized: "Zuschnitt zurücksetzen")) { $0.crop = nil }
+        if tool == .crop { cropDraft = originalBounds }
     }
 
     // MARK: - Auswahl und Ebenen
@@ -302,6 +475,7 @@ final class EditorViewModel {
 
     func deleteSelection() {
         guard !selection.isEmpty, !isReadOnly else { return }
+        endTextEditing(commit: true)
         let ids = selection
         apply(String(localized: "Löschen")) { $0.annotations.removeAll { ids.contains($0.id) } }
         selection = []
@@ -381,7 +555,7 @@ final class EditorViewModel {
     }
 
     func renderFull(scale: ExportScale, captureScale: CGFloat) -> CGImage? {
-        Renderer.render(renderInput, outputScale: ExportScaling.factor(scale, captureScale: captureScale))
+        Renderer.render(renderInput(preview: false), outputScale: ExportScaling.factor(scale, captureScale: captureScale))
     }
 
     /// Beendet laufende Arbeit beim Schließen des Fensters.
@@ -409,17 +583,25 @@ final class EditorViewModel {
         defer { renderTask = nil }
         while !Task.isCancelled, let maxSize = previewMaxPixelSize {
             let current = generation
-            let input = renderInput
-            let canvas = canvasSize
-            guard canvas.width > 0, canvas.height > 0 else { return }
+            let input = renderInput(preview: true)
+            let canvas = displaySize
+            guard canvas.width > 0, canvas.height > 0 else {
+                renderFailed = true
+                return
+            }
             let scale = min(1, maxSize.width / canvas.width, maxSize.height / canvas.height)
             let image = await Task.detached(priority: .userInitiated) {
                 Renderer.render(input, outputScale: scale)
             }.value
             guard !Task.isCancelled else { return }
-            if let image, current > shownGeneration {
-                preview = image
-                shownGeneration = current
+            if let image {
+                if current > shownGeneration {
+                    preview = image
+                    shownGeneration = current
+                }
+                if renderFailed { renderFailed = false }
+            } else if current == generation {
+                renderFailed = true
             }
             if current == generation { return }
             try? await Task.sleep(for: Self.debounce)

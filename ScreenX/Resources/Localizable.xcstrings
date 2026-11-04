@@ -180,7 +180,7 @@
     "Pfeil" : {},
     "Pfeilform" : {},
     "Pfeilspitze" : {},
-    "Rahmen ziehen, um das Bild zuzuschneiden." : {},
+    "Rahmen ziehen, um das Bild zuzuschneiden. ⇧ hält das Seitenverhältnis." : {},
     "Rechteck" : {},
     "Schriftgröße" : {},
     "Startwert %lld" : {},
@@ -205,7 +205,12 @@
     "Unschärfe hinzufügen" : {},
     "Marker hinzufügen" : {},
     "Ziehen, um das Bild als Datei abzulegen" : {},
-    "Bild herausziehen" : {}
+    "Bild herausziehen" : {},
+    "Fertig" : {},
+    "Zurücksetzen" : {},
+    "Zuschneiden" : {},
+    "Zuschnitt zurücksetzen" : {},
+    "Text bearbeiten" : {}
   },
   "version" : "1.0"
 }
