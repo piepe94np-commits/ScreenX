@@ -36,7 +36,8 @@ public enum ImageExporter {
         if format == .jpeg {
             properties[kCGImageDestinationLossyCompressionQuality] = jpegQuality
         }
-        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        let encoded = format == .jpeg ? try flattenedOnWhite(image) : image
+        CGImageDestinationAddImage(destination, encoded, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw ExportError.encodingFailed
         }
@@ -71,6 +72,21 @@ public enum ImageExporter {
         } catch {
             throw ExportError.directoryNotWritable(directory)
         }
+    }
+
+    /// JPEG has no alpha: composite onto opaque white so transparent areas don't turn black.
+    private static func flattenedOnWhite(_ image: CGImage) throws -> CGImage {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { throw ExportError.encodingFailed }
+        let rect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(rect)
+        ctx.draw(image, in: rect)
+        guard let flattened = ctx.makeImage() else { throw ExportError.encodingFailed }
+        return flattened
     }
 
     private static func timestamp(date: Date, timeZone: TimeZone) -> String {

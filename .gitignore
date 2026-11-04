@@ -6,3 +6,4 @@ TestResults*
 .superpowers/
 .DS_Store
 xcuserdata/
+ScreenXCoreTests/__Output__/

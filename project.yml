@@ -36,7 +36,9 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - ScreenXCoreTests
+      - path: ScreenXCoreTests
+        excludes:
+          - "__Output__/**"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.screenx.core.tests
