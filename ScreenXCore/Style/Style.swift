@@ -116,9 +116,11 @@ public struct Style: Codable, Hashable, Sendable {
     public var keepWindowShadow: Bool
     public var aspect: AspectRatio
     public var alignment: ContentAlignment
+    /// 3D tilt of the content (with or without device template).
+    public var tilt: Tilt
 
     public init(background: Background, padding: Double, cornerRadius: Double, shadow: ShadowStyle,
-                keepWindowShadow: Bool, aspect: AspectRatio, alignment: ContentAlignment) {
+                keepWindowShadow: Bool, aspect: AspectRatio, alignment: ContentAlignment, tilt: Tilt = .zero) {
         self.background = background
         self.padding = padding
         self.cornerRadius = cornerRadius
@@ -126,6 +128,25 @@ public struct Style: Codable, Hashable, Sendable {
         self.keepWindowShadow = keepWindowShadow
         self.aspect = aspect
         self.alignment = alignment
+        self.tilt = tilt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case background, padding, cornerRadius, shadow, keepWindowShadow, aspect, alignment, tilt
+    }
+
+    /// Tolerant: missing fields (e.g. `tilt` in projects from M2/M3) take the `.default` values.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Style.default
+        background = try c.decodeIfPresent(Background.self, forKey: .background) ?? d.background
+        padding = try c.decodeIfPresent(Double.self, forKey: .padding) ?? d.padding
+        cornerRadius = try c.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? d.cornerRadius
+        shadow = try c.decodeIfPresent(ShadowStyle.self, forKey: .shadow) ?? d.shadow
+        keepWindowShadow = try c.decodeIfPresent(Bool.self, forKey: .keepWindowShadow) ?? d.keepWindowShadow
+        aspect = try c.decodeIfPresent(AspectRatio.self, forKey: .aspect) ?? d.aspect
+        alignment = try c.decodeIfPresent(ContentAlignment.self, forKey: .alignment) ?? d.alignment
+        tilt = try c.decodeIfPresent(Tilt.self, forKey: .tilt) ?? d.tilt
     }
 
     public static let `default` = Style(

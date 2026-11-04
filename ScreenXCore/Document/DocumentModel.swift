@@ -29,14 +29,18 @@ public struct DocumentModel: Codable, Hashable, Sendable {
     /// Crop in original pixels, origin top-left. `nil` uses the whole original.
     public var crop: CGRect?
     public var style: Style
+    /// Device template, `nil` without device.
+    public var template: TemplatePlacement?
     public var annotations: [Annotation]
 
     public init(version: Int = DocumentModel.currentVersion, original: OriginalInfo,
-                crop: CGRect? = nil, style: Style, annotations: [Annotation] = []) {
+                crop: CGRect? = nil, style: Style, template: TemplatePlacement? = nil,
+                annotations: [Annotation] = []) {
         self.version = version
         self.original = original
         self.crop = crop
         self.style = style
+        self.template = template
         self.annotations = annotations
     }
 
@@ -60,8 +64,8 @@ public struct DocumentModel: Codable, Hashable, Sendable {
         } else {
             crop = nil
         }
+        template = try c.decodeIfPresent(TemplatePlacement.self, forKey: .template)
         annotations = try c.decodeIfPresent([Annotation].self, forKey: .annotations) ?? []
-        // `template` is ignored until a later milestone uses it.
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -78,7 +82,7 @@ public struct DocumentModel: Codable, Hashable, Sendable {
             try c.encodeNil(forKey: .crop)
         }
         try c.encode(style, forKey: .style)
-        try c.encodeNil(forKey: .template)
+        try c.encode(template, forKey: .template) // `null` without template
         try c.encode(annotations, forKey: .annotations)
     }
 }
