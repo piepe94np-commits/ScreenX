@@ -1,6 +1,11 @@
 {
   "sourceLanguage" : "de",
   "strings" : {
+    "document.json fehlt" : {},
+    "Kein Paket" : {},
+    "Die Datei ist beschädigt: %@" : {},
+    "Das Originalbild ist nicht lesbar" : {},
+    "Das Originalbild fehlt in der Datei." : {},
     "%lld s" : {},
     "Allgemein" : {},
     "Anheften" : {},
