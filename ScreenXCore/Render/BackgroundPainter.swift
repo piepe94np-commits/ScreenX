@@ -5,11 +5,12 @@ import Foundation
 /// Paints a `Background` into a context flipped to a top-left origin, in original-pixel units.
 enum BackgroundPainter {
     /// CIContext is documented as thread-safe; the box only makes that known to the compiler.
-    private struct CIContextBox: @unchecked Sendable {
+    struct CIContextBox: @unchecked Sendable {
         let context: CIContext
     }
 
-    private static let sharedCIContext = CIContextBox(context: CIContext(options: [.cacheIntermediates: false]))
+    /// Shared with `AnnotationRenderer` (blur annotations).
+    static let sharedCIContext = CIContextBox(context: CIContext(options: [.cacheIntermediates: false]))
 
     static func paint(_ background: Background, in ctx: CGContext, canvas: CGRect, original: CGImage,
                       backgroundImage: CGImage?, outputScale: CGFloat) {

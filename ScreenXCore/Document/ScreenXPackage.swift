@@ -175,7 +175,8 @@ public enum ScreenXPackage {
 
     private static func renderPreview(model: DocumentModel, original: CGImage, backgroundImage: CGImage?) -> CGImage? {
         let input = RenderInput(original: original, crop: model.crop, style: model.style,
-                                backgroundImage: backgroundImage)
+                                backgroundImage: backgroundImage, annotations: model.annotations,
+                                originalScale: model.original.scale > 0 ? CGFloat(model.original.scale) : 1)
         guard let full = Renderer.render(input, outputScale: 1) else { return nil }
         let longest = CGFloat(max(full.width, full.height))
         guard longest > previewMaxEdge else { return full }

@@ -108,7 +108,8 @@ final class EditorViewModel {
     }
 
     private var renderInput: RenderInput {
-        RenderInput(original: original, crop: model.crop, style: model.style, backgroundImage: backgroundImage)
+        RenderInput(original: original, crop: model.crop, style: model.style, backgroundImage: backgroundImage,
+                    annotations: model.annotations, originalScale: captureScale)
     }
 
     private var snapshot: Snapshot {

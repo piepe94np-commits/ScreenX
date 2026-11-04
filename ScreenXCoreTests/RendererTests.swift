@@ -173,6 +173,35 @@ struct RendererTests {
         }
     }
 
+    @Test func cropAppliedWithYOffset() throws {
+        // Top half red, bottom half blue. The context is y-up, so y 0..<50 is the bottom half.
+        let ctx = Self.makeContext(width: 200, height: 100)
+        ctx.setFillColor(CGColor(srgbRed: 0x20 / 255, green: 0x50 / 255, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 50))
+        ctx.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 50, width: 200, height: 50))
+        let original = try #require(ctx.makeImage())
+        let input = RenderInput(original: original, crop: CGRect(x: 0, y: 50, width: 200, height: 50),
+                                style: Self.style(.none))
+        let image = try #require(Renderer.render(input))
+        #expect(image.width == 200 + 128)
+        #expect(image.height == 50 + 128)
+        for (x, y) in [(65, 65), (64 + 100, 64 + 25), (64 + 198, 64 + 48)] {
+            let p = Self.pixel(image, at: x, y)
+            #expect(p.isClose(to: Self.blue), "(\(x), \(y)): \(p)")
+        }
+    }
+
+    @Test func emptyCropFallsBackToFullImage() throws {
+        let input = RenderInput(original: Self.redBlueImage(), crop: CGRect(x: 500, y: 500, width: 10, height: 10),
+                                style: Self.style(.none))
+        let image = try #require(Renderer.render(input))
+        #expect(image.width == 200 + 128)
+        #expect(image.height == 100 + 128)
+        #expect(Self.pixel(image, at: 64 + 50, 64 + 50).isClose(to: Self.red))
+        #expect(Self.pixel(image, at: 64 + 150, 64 + 50).isClose(to: Self.blue))
+    }
+
     @Test func jpegFlattensTransparencyOnWhite() throws {
         let input = RenderInput(original: Self.blueImage(), style: Self.style(.none))
         let image = try #require(Renderer.render(input))

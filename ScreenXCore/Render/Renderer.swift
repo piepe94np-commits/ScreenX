@@ -9,28 +9,38 @@ public struct RenderInput: Sendable {
     public var style: Style
     /// Decoded image for `Background.image`; ignored by other backgrounds.
     public var backgroundImage: CGImage?
+    /// Drawn above the screenshot, in original pixels (origin top-left).
+    public var annotations: [Annotation]
+    /// Backing scale of the capture (`OriginalInfo.scale`); scales note text.
+    public var originalScale: CGFloat
 
-    public init(original: CGImage, crop: CGRect? = nil, style: Style, backgroundImage: CGImage? = nil) {
+    public init(original: CGImage, crop: CGRect? = nil, style: Style, backgroundImage: CGImage? = nil,
+                annotations: [Annotation] = [], originalScale: CGFloat = 1) {
         self.original = original
         self.crop = crop
         self.style = style
         self.backgroundImage = backgroundImage
+        self.annotations = annotations
+        self.originalScale = originalScale
     }
 }
 
 public enum Renderer {
-    /// Renders background, shadow and the rounded (optionally cropped) screenshot.
+    /// Renders background, shadow, the rounded (optionally cropped) screenshot and the annotations.
     /// Output size is `canvasSize × outputScale`, rounded; sRGB, premultiplied alpha.
-    /// Returns `nil` if the crop is empty or no context can be created.
+    /// A crop that does not overlap the original is ignored (the whole original is shown).
+    /// Returns `nil` only for a non-positive `outputScale` or if no context can be created.
     public static func render(_ input: RenderInput, outputScale: CGFloat = 1) -> CGImage? {
         guard outputScale > 0 else { return nil }
-        let content: CGImage
+        let bounds = CGRect(x: 0, y: 0, width: input.original.width, height: input.original.height)
+        // Same clipping as `ImageCropper`, so the content and the annotation offset agree.
+        var contentRect = bounds
         if let crop = input.crop {
-            guard let cropped = ImageCropper.crop(input.original, to: crop) else { return nil }
-            content = cropped
-        } else {
-            content = input.original
+            let clipped = crop.standardized.integral.intersection(bounds)
+            if !clipped.isNull, !clipped.isEmpty { contentRect = clipped }
         }
+        guard let content = contentRect == bounds ? input.original : input.original.cropping(to: contentRect)
+        else { return nil }
 
         let style = input.style
         let layout = CanvasLayout.compute(
@@ -77,6 +87,13 @@ public enum Renderer {
         ctx.restoreGState()
         ctx.endTransparencyLayer()
         ctx.restoreGState()
+
+        // After the image layer, so annotations do not cast the image's shadow.
+        let originToCanvas = CGAffineTransform(translationX: rect.minX - contentRect.minX,
+                                               y: rect.minY - contentRect.minY)
+        AnnotationRenderer.draw(input.annotations, in: ctx, original: input.original,
+                                originToCanvas: originToCanvas, clipRect: rect, clipRadius: radius,
+                                originalScale: input.originalScale)
 
         return ctx.makeImage()
     }
