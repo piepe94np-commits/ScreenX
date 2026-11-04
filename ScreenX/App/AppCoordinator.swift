@@ -36,6 +36,8 @@ final class AppCoordinator {
     @ObservationIgnored private var hotkeyCenter: HotkeyCenter?
     /// Der einzige lokale keyDown-Monitor des Kürzel-Rekorders.
     @ObservationIgnored private var recordingMonitor: Any?
+    /// Beenden die Aufnahme, wenn die App inaktiv wird oder das Einstellungsfenster schließt.
+    @ObservationIgnored private var recordingObservers: [any NSObjectProtocol] = []
 
     init(store: SettingsStore = SettingsStore(defaults: .standard)) {
         self.store = store
@@ -52,6 +54,7 @@ final class AppCoordinator {
             Task { await self.capture(mode) }
         }
         registerHotkeys()
+        Task { @MainActor in ScreenPermission.requestAtLaunch() }
     }
 
     // MARK: - Aufnahme
@@ -122,6 +125,18 @@ final class AppCoordinator {
             self?.handleRecording(event)
             return nil
         }
+        let center = NotificationCenter.default
+        let stop: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopRecording() }
+        }
+        recordingObservers.append(
+            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main, using: stop)
+        )
+        if let window = NSApp.keyWindow {
+            recordingObservers.append(
+                center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main, using: stop)
+            )
+        }
     }
 
     /// Beendet die Aufnahme (falls eine läuft) und meldet die Kürzel wieder an.
@@ -133,6 +148,8 @@ final class AppCoordinator {
     }
 
     private func removeRecordingMonitor() {
+        for observer in recordingObservers { NotificationCenter.default.removeObserver(observer) }
+        recordingObservers = []
         if let recordingMonitor {
             NSEvent.removeMonitor(recordingMonitor)
             self.recordingMonitor = nil

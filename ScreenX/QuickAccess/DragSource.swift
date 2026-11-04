@@ -9,15 +9,21 @@ enum DragFile {
         FileManager.default.temporaryDirectory.appendingPathComponent("ScreenX", isDirectory: true)
     }
 
-    static func write(_ capture: Capture, settings: AppSettings) throws -> URL {
+    /// Schreibt die Datei in einen eigenen UUID-Unterordner (der Dateiname bleibt sichtbar
+    /// unverändert); `folder` wird beim Schließen der Karte entfernt.
+    static func makeFolder() -> URL {
+        directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    static func write(_ capture: Capture, settings: AppSettings, folder: URL) throws -> URL {
         let encoded = try ImageExporter.data(
             for: capture.image,
             scale: capture.scale,
             format: settings.exportFormat,
             jpegQuality: settings.jpegQuality
         )
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent(
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(
             ImageExporter.fileName(date: capture.date, format: settings.exportFormat)
         )
         try encoded.write(to: url, options: .atomic)

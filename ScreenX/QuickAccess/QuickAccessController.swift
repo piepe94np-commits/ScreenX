@@ -61,7 +61,13 @@ final class QuickAccessController {
             },
             dragEnded: { [weak self, weak card] dropped in
                 guard let self, let card else { return }
-                if dropped { self.close(card) } else { self.restartTimer(card) }
+                if dropped {
+                    self.close(card)
+                } else {
+                    // Während des Ziehens kommt kein mouseExited an: Hover neu bestimmen.
+                    card.model.isHovered = self.isMouseOver(card)
+                    self.restartTimer(card)
+                }
             }
         )
         let hosting = QuickAccessHostingView(rootView: QuickAccessItemView(model: model, actions: actions))
@@ -117,6 +123,18 @@ final class QuickAccessController {
         close(card)
     }
 
+    private func isMouseOver(_ card: QuickAccessCard) -> Bool {
+        let margins = QuickAccessMetrics.margins
+        let frame = card.panel.frame
+        let rect = CGRect(
+            x: frame.minX + margins.left,
+            y: frame.minY + margins.bottom,
+            width: QuickAccessMetrics.cardSize.width,
+            height: QuickAccessMetrics.cardSize.height
+        )
+        return NSMouseInRect(NSEvent.mouseLocation, rect, false)
+    }
+
     private func togglePin(_ card: QuickAccessCard) {
         card.model.isPinned.toggle()
         restartTimer(card)
@@ -126,7 +144,7 @@ final class QuickAccessController {
         // Während des Ziehens darf die Karte nicht automatisch verschwinden.
         card.timer?.cancel()
         if let url = card.dragURL, FileManager.default.fileExists(atPath: url.path) { return url }
-        let url = try DragFile.write(card.model.capture, settings: settings())
+        let url = try DragFile.write(card.model.capture, settings: settings(), folder: card.dragFolder)
         card.dragURL = url
         return url
     }
@@ -174,6 +192,7 @@ final class QuickAccessController {
         cards.remove(at: index)
         card.timer?.cancel()
         card.feedbackTask?.cancel()
+        try? FileManager.default.removeItem(at: card.dragFolder)
         let panel = card.panel
         let slide = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         animate {
@@ -245,6 +264,8 @@ private final class QuickAccessCard {
     var timer: Task<Void, Never>?
     var feedbackTask: Task<Void, Never>?
     var dragURL: URL?
+    /// Eigener Unterordner der Karte für die Ziehen-Datei.
+    let dragFolder = DragFile.makeFolder()
 
     init(model: QuickAccessItemModel, panel: QuickAccessPanel) {
         self.model = model

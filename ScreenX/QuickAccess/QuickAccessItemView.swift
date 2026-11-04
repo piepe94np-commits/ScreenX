@@ -194,7 +194,7 @@ final class QuickAccessHostingView: NSHostingView<QuickAccessItemView> {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let hoverArea { removeTrackingArea(hoverArea) }
-        let area = NSTrackingArea(rect: cardRect, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        let area = NSTrackingArea(rect: cardRect, options: [.mouseEnteredAndExited, .activeAlways, .enabledDuringMouseDrag], owner: self)
         addTrackingArea(area)
         hoverArea = area
     }
