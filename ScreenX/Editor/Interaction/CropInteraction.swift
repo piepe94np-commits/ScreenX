@@ -46,7 +46,7 @@ enum CropInteraction {
     }
 
     /// Position eines Griffs am Rahmen `r` (gleiches Koordinatensystem wie `r`).
-    static func point(of handle: Handle, in r: CGRect) -> CGPoint {
+    nonisolated static func point(of handle: Handle, in r: CGRect) -> CGPoint {
         switch handle {
         case .topLeft: CGPoint(x: r.minX, y: r.minY)
         case .top: CGPoint(x: r.midX, y: r.minY)
