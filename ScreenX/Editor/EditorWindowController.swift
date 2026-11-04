@@ -171,7 +171,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     /// Kopiert das gerenderte Bild; ist in einem Textfeld Text markiert, wird dieser kopiert.
     @objc func editorCopy(_ sender: Any?) {
-        if let text = window?.firstResponder as? NSText, text.selectedRange().length > 0 {
+        if let text = window?.firstResponder as? NSText, text.selectedRange.length > 0 {
             text.copy(sender)
         } else {
             viewModel.copy()
