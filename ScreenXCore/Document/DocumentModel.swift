@@ -29,13 +29,15 @@ public struct DocumentModel: Codable, Hashable, Sendable {
     /// Crop in original pixels, origin top-left. `nil` uses the whole original.
     public var crop: CGRect?
     public var style: Style
+    public var annotations: [Annotation]
 
     public init(version: Int = DocumentModel.currentVersion, original: OriginalInfo,
-                crop: CGRect? = nil, style: Style) {
+                crop: CGRect? = nil, style: Style, annotations: [Annotation] = []) {
         self.version = version
         self.original = original
         self.crop = crop
         self.style = style
+        self.annotations = annotations
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -58,7 +60,8 @@ public struct DocumentModel: Codable, Hashable, Sendable {
         } else {
             crop = nil
         }
-        // `template` and `annotations` are ignored until later milestones use them.
+        annotations = try c.decodeIfPresent([Annotation].self, forKey: .annotations) ?? []
+        // `template` is ignored until a later milestone uses it.
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -76,6 +79,6 @@ public struct DocumentModel: Codable, Hashable, Sendable {
         }
         try c.encode(style, forKey: .style)
         try c.encodeNil(forKey: .template)
-        try c.encode([String](), forKey: .annotations)
+        try c.encode(annotations, forKey: .annotations)
     }
 }
