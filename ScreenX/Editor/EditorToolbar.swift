@@ -13,7 +13,8 @@ struct EditorToolbar: ToolbarContent {
                 Label("Widerrufen", systemImage: "arrow.uturn.backward")
             }
             .help("Widerrufen")
-            .disabled(!vm.canUndo)
+            // Beim Tippen auf der Arbeitsfläche gilt ⌘Z fürs Tippen; die Knöpfe ruhen dann.
+            .disabled(!vm.canUndo || vm.editingTextID != nil)
 
             Button {
                 vm.redo()
@@ -21,7 +22,7 @@ struct EditorToolbar: ToolbarContent {
                 Label("Wiederholen", systemImage: "arrow.uturn.forward")
             }
             .help("Wiederholen")
-            .disabled(!vm.canRedo)
+            .disabled(!vm.canRedo || vm.editingTextID != nil)
         }
 
         ToolbarItem(placement: .principal) {

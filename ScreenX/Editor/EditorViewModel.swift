@@ -53,7 +53,7 @@ final class EditorViewModel {
         didSet { toolDidChange(from: oldValue) }
     }
     /// IDs der ausgewählten Anmerkungen. Die Auswahl ist kein Teil des Dokuments und kein Undo-Schritt;
-    /// IDs, die es nach Undo/Redo nicht mehr gibt, fallen heraus.
+    /// IDs, die es nach Undo/Redo nicht mehr gibt bzw. die der Zuschnitt ganz verdeckt, fallen heraus.
     var selection: Set<UUID> = []
     /// Text- bzw. Notiz-Anmerkung, deren Text gerade über der Arbeitsfläche bearbeitet wird
     /// (`beginTextEditing` … `endTextEditing`). Die Vorschau zeichnet ihren Text so lange nicht,
@@ -144,6 +144,13 @@ final class EditorViewModel {
     /// Der angezeigte Zuschnitt: beim Zuschnitt-Werkzeug keiner (die Fläche zeigt das ganze Original).
     private var displayCrop: CGRect? { tool == .crop ? nil : model.crop }
 
+    /// Die auf der angezeigten Fläche sichtbaren Anmerkungen (wie beim Rendern). Nur sie lassen sich treffen,
+    /// auswählen und bearbeiten; ganz weggeschnittene bleiben unberührt.
+    var interactiveAnnotations: [Annotation] {
+        let visible = displayCrop ?? originalBounds
+        return model.annotations.filter { AnnotationGeometry.isVisible($0, in: visible) }
+    }
+
     /// Aufteilung der angezeigten Arbeitsfläche (mit `displayCrop`).
     var displayLayout: CanvasLayout {
         CanvasLayout.compute(contentSize: displayCrop?.size ?? originalBounds.size, style: model.style)
@@ -179,9 +186,8 @@ final class EditorViewModel {
 
     func apply(_ actionName: String, _ change: (inout DocumentModel) -> Void) {
         guard !isReadOnly else { return }
-        // Während der Textbearbeitung (z. B. Schriftgröße in der Optionsleiste) gehört jede Änderung
-        // zu deren Undo-Schritt.
-        if editingTextID != nil, continuousStart != nil { return applyLive(change) }
+        // Eine offene Textbearbeitung ist ein eigener, früherer Schritt.
+        endTextEditing(commit: true)
         flushPendingEdit()
         let before = snapshot
         var updated = model
@@ -191,8 +197,15 @@ final class EditorViewModel {
         commit(from: before, actionName)
     }
 
+    /// Beginnt einen Schritt ohne Undo-Schritt je Zwischenstand (Zug, Regler). Eine offene Textbearbeitung
+    /// wird zuerst als eigener Schritt übernommen. Ist schon ein Schritt offen, passiert nichts.
     func beginContinuousChange() {
         guard !isReadOnly else { return }
+        endTextEditing(commit: true)
+        openContinuousStep()
+    }
+
+    private func openContinuousStep() {
         flushPendingEdit()
         guard continuousStart == nil else { return }
         continuousStart = snapshot
@@ -203,6 +216,7 @@ final class EditorViewModel {
     /// Er endet mit `flushPendingEdit()`: zeitgesteuert, vor jeder anderen Änderung und vor Undo/Redo.
     func beginPendingEdit(_ actionName: String) {
         guard !isReadOnly else { return }
+        endTextEditing(commit: true)
         if pendingEditName == nil {
             flushPendingEdit()
             guard continuousStart == nil else { return }
@@ -234,9 +248,8 @@ final class EditorViewModel {
 
     /// Registriert genau einen Undo-Schritt für den ganzen Reglerzug (falls sich etwas geändert hat).
     /// Ist das Modell am Ende wieder wie am Anfang, gilt auch der Änderungszustand von damals.
-    /// Während der Textbearbeitung zählt nur deren Ende (Regler gehören zu ihrem Schritt).
     func endContinuousChange(_ actionName: String) {
-        guard editingTextID == nil, let start = continuousStart else { return }
+        guard let start = continuousStart else { return }
         continuousStart = nil
         pendingEditName = nil
         defer { refreshUndoState() }
@@ -266,6 +279,7 @@ final class EditorViewModel {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { throw EditorError.unreadableImage }
+        endTextEditing(commit: true)
         flushPendingEdit()
         let before = snapshot
         let ext = ext.lowercased()
@@ -276,20 +290,23 @@ final class EditorViewModel {
         commit(from: before, String(localized: "Hintergrundbild"))
     }
 
-    /// Bricht zuerst einen laufenden Zug ab und übernimmt eine offene Textbearbeitung;
-    /// während eines Reglerzugs passiert nichts.
-    func undo() {
+    /// Bricht einen laufenden Mauszug ab und schließt eine offene Textbearbeitung und einen offenen
+    /// Farbschritt ab, damit Historie, Modell und Änderungszustand übereinstimmen (vor Undo/Redo und Sichern).
+    func finishOpenEdits() {
         interruptInteraction?()
         endTextEditing(commit: true)
         flushPendingEdit()
+    }
+
+    /// Schließt zuerst offene Bearbeitungen ab (`finishOpenEdits`); während eines Reglerzugs passiert nichts.
+    func undo() {
+        finishOpenEdits()
         guard continuousStart == nil else { return }
         undoManager?.undo()
     }
 
     func redo() {
-        interruptInteraction?()
-        endTextEditing(commit: true)
-        flushPendingEdit()
+        finishOpenEdits()
         guard continuousStart == nil else { return }
         undoManager?.redo()
     }
@@ -337,7 +354,7 @@ final class EditorViewModel {
               let frame = Self.textFrame(of: annotation)
         else { return }
         endTextEditing(commit: true)
-        beginContinuousChange()
+        openContinuousStep()
         textEditIsNew = isNew
         textEditStartHeight = frame.height
         selection = [id]
@@ -348,12 +365,27 @@ final class EditorViewModel {
     /// Übernimmt den getippten Text live; die Rahmenhöhe wächst mit dem Inhalt (Core-Text-Messung wie
     /// beim Rendern).
     func updateEditingText(_ string: String) {
-        guard let id = editingTextID else { return }
+        updateEditedAnnotation(string: string) { _ in }
+    }
+
+    /// Änderung aus der Optionsleiste an der gerade bearbeiteten Anmerkung (Schriftgröße, fett, Farbe,
+    /// Hintergrund, Notizfarbe): gehört zum Schritt der Bearbeitung. Die Rahmenhöhe wird mit dem aktuellen
+    /// Text neu gemessen.
+    func applyToEditingText(_ change: (inout Annotation) -> Void) {
+        updateEditedAnnotation(string: nil, change)
+    }
+
+    /// Ändert die bearbeitete Anmerkung live (`string`: neuer Text, `nil` behält ihn) und passt die Rahmenhöhe
+    /// an den Inhalt an.
+    private func updateEditedAnnotation(string: String?, _ change: (inout Annotation) -> Void) {
+        guard let id = editingTextID, continuousStart != nil else { return }
         let scale = captureScale
         let minimumHeight = textEditStartHeight
         applyLive { model in
             guard let index = model.annotations.firstIndex(where: { $0.id == id }) else { return }
-            let annotation = model.annotations[index]
+            var annotation = model.annotations[index]
+            change(&annotation)
+            let string = string ?? Self.text(of: annotation) ?? ""
             let needed = AnnotationTextLayout.requiredFrameHeight(of: annotation, string: string,
                                                                   originalScale: scale) ?? 0
             model.annotations[index] = Self.withText(annotation, string, height: max(minimumHeight, needed))
@@ -442,6 +474,7 @@ final class EditorViewModel {
         let crop = CropGeometry.committed(draft, bounds: originalBounds)
         apply(String(localized: "Zuschneiden")) { $0.crop = crop }
         tool = .select
+        pruneSelection()
     }
 
     /// Esc: verwirft den Rahmen und verlässt das Werkzeug.
@@ -484,6 +517,9 @@ final class EditorViewModel {
     /// Dupliziert die Auswahl um 20 px nach rechts unten versetzt, ganz oben; die Kopien werden ausgewählt.
     func duplicateSelection() {
         guard !selection.isEmpty, !isReadOnly else { return }
+        // Erst den Text übernehmen: die Kopien zeigen ihn, eine leere neue Anmerkung verschwindet.
+        endTextEditing(commit: true)
+        guard !selection.isEmpty else { return }
         let copies = model.annotations.filter { selection.contains($0.id) }.map { annotation in
             var copy = AnnotationGeometry.moved(annotation, by: CGVector(dx: 20, dy: 20))
             copy.id = UUID()
@@ -539,8 +575,9 @@ final class EditorViewModel {
         }
     }
 
+    /// Entfernt aus der Auswahl, was es nicht mehr gibt oder was nicht sichtbar ist (`interactiveAnnotations`).
     private func pruneSelection() {
-        let existing = Set(model.annotations.map(\.id))
+        let existing = Set(interactiveAnnotations.map(\.id))
         if !selection.isSubset(of: existing) { selection.formIntersection(existing) }
     }
 

@@ -28,6 +28,11 @@ struct AnnotationInteraction: NSViewRepresentable {
         view.needsDisplay = true
         view.refreshCursor()
     }
+
+    /// Entfernt den Tastenmonitor sofort, auch wenn die Ansicht ohne `viewWillMove(toWindow: nil)` verschwindet.
+    static func dismantleNSView(_ view: AnnotationInteractionView, coordinator: ()) {
+        view.removeKeyMonitor()
+    }
 }
 
 /// Maus und Tasten auf der Arbeitsfläche: Anmerkungen zeichnen, auswählen, verschieben, skalieren, drehen,
@@ -102,10 +107,12 @@ final class AnnotationInteractionView: NSView {
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
-        if newWindow == nil {
-            keyMonitor?.remove()
-            keyMonitor = nil
-        }
+        if newWindow == nil { removeKeyMonitor() }
+    }
+
+    func removeKeyMonitor() {
+        keyMonitor?.remove()
+        keyMonitor = nil
     }
 
     /// ⌫/Entf, ⌘D, ⌘], ⌘[, Esc und Pfeiltasten (⇧: 10 px) in diesem Fenster, solange kein Text bearbeitet wird
@@ -180,10 +187,10 @@ final class AnnotationInteractionView: NSView {
         convert(event.locationInWindow, from: nil)
     }
 
-    /// Griff der einzigen ausgewählten Anmerkung unter `point` (Ansichtspunkte).
+    /// Griff der einzigen ausgewählten (sichtbaren) Anmerkung unter `point` (Ansichtspunkte).
     private func handleHit(at point: CGPoint) -> (Handle, Annotation)? {
         guard vm.selection.count == 1,
-              let target = vm.model.annotations.first(where: { vm.selection.contains($0.id) }),
+              let target = vm.interactiveAnnotations.first(where: { vm.selection.contains($0.id) }),
               let handle = SelectionOverlayLayer.handle(at: point, of: target, mapping: mapping)
         else { return nil }
         return (handle, target)
@@ -229,7 +236,8 @@ final class AnnotationInteractionView: NSView {
         switch vm.tool {
         case .select:
             let tolerance = Self.hitTolerance / max(viewScale, 0.0001)
-            if let hit = AnnotationGeometry.hitTest(p, in: vm.model.annotations, tolerance: tolerance) {
+            // Nur sichtbare Anmerkungen: was der Zuschnitt ganz verdeckt, lässt sich nicht treffen.
+            if let hit = AnnotationGeometry.hitTest(p, in: vm.interactiveAnnotations, tolerance: tolerance) {
                 if shift {
                     vm.select(hit, extend: true)
                 } else {
@@ -288,11 +296,12 @@ final class AnnotationInteractionView: NSView {
         refreshCursor(at: inView)
     }
 
-    /// Oberste Text- bzw. Notiz-Anmerkung unter `p` (Pixel des Originals).
+    /// Oberste sichtbare Text- bzw. Notiz-Anmerkung unter `p` (Pixel des Originals).
     private func textAnnotation(at p: CGPoint) -> UUID? {
         let tolerance = Self.hitTolerance / max(viewScale, 0.0001)
-        guard let id = AnnotationGeometry.hitTest(p, in: vm.model.annotations, tolerance: tolerance),
-              let annotation = vm.model.annotations.first(where: { $0.id == id }),
+        let candidates = vm.interactiveAnnotations
+        guard let id = AnnotationGeometry.hitTest(p, in: candidates, tolerance: tolerance),
+              let annotation = candidates.first(where: { $0.id == id }),
               AnnotationTextLayout.textRect(of: annotation) != nil
         else { return nil }
         return id
@@ -411,7 +420,8 @@ private enum KeyCode {
 }
 
 /// Lokaler keyDown-Monitor. Er entfernt sich selbst, falls die Ansicht ohne `viewWillMove(toWindow: nil)`
-/// verschwindet (z. B. wenn das Fenster samt Ansichten freigegeben wird).
+/// verschwindet (z. B. wenn das Fenster samt Ansichten freigegeben wird): beim ersten Ereignis danach bzw.
+/// spätestens, wenn er selbst freigegeben wird.
 @MainActor
 private final class KeyMonitor {
     private var token: Any?
@@ -425,6 +435,10 @@ private final class KeyMonitor {
             }
             return consumed ? nil : event
         }
+    }
+
+    isolated deinit {
+        remove()
     }
 
     func remove() {

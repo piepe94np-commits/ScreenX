@@ -67,8 +67,11 @@ enum CropInteraction {
     }
 
     /// Was ein Druck bei `point` bewegt: der nächste Griff, sonst innen der Rahmen, außen ein neuer.
+    /// Ist der Rahmen auf dem Bildschirm klein (unter 3 Griff-Radien), gewinnt innen das Verschieben,
+    /// damit er sich noch bewegen lässt; seine Griffe greifen dann nur außerhalb.
     static func part(at point: CGPoint, draft: CGRect, mapping: CanvasMapping) -> Part {
         let frame = viewRect(draft, mapping: mapping)
+        if frame.contains(point), min(frame.width, frame.height) < 3 * handleHitRadius { return .move }
         let nearest = boxHandles
             .map { (handle: $0, distance: hypot(Self.point(of: $0, in: frame).x - point.x,
                                                  Self.point(of: $0, in: frame).y - point.y)) }

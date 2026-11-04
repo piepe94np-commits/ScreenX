@@ -104,7 +104,7 @@ struct DragOperation {
         case let .marquee(base):
             let rect = CGRect(x: start.x, y: start.y, width: p.x - start.x, height: p.y - start.y)
             let hits = dragDistance >= Self.minimumDrag
-                ? AnnotationGeometry.ids(intersecting: rect, in: vm.model.annotations) : []
+                ? AnnotationGeometry.ids(intersecting: rect, in: vm.interactiveAnnotations) : []
             let selection = base.union(hits)
             if vm.selection != selection { vm.selection = selection }
         }

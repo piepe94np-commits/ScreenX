@@ -20,6 +20,13 @@ struct ToolOptionsBar: View {
 
     private var isSelection: Bool { !selected.isEmpty }
 
+    /// Die Auswahl ist der gerade auf der Arbeitsfläche bearbeitete Text bzw. die Notiz: Änderungen gehören
+    /// dann zum Schritt der Bearbeitung (`applyToEditingText`) statt zu einem eigenen.
+    private var editsText: Bool {
+        guard let id = vm.editingTextID else { return false }
+        return vm.selection == [id]
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             let groups = isSelection ? Self.groups(for: selected) : Self.groups(for: vm.tool)
@@ -97,9 +104,12 @@ struct ToolOptionsBar: View {
 
     // MARK: - Änderungen
 
-    /// Eine einzelne Änderung: an der Auswahl als ein Undo-Schritt, sonst an den Werkzeug-Optionen.
+    /// Eine einzelne Änderung: am bearbeiteten Text in dessen Schritt, an der Auswahl als ein Undo-Schritt,
+    /// sonst an den Werkzeug-Optionen.
     private func edit(_ name: String, tool: () -> Void, annotation: (inout Annotation) -> Void) {
-        if isSelection {
+        if editsText {
+            vm.applyToEditingText(annotation)
+        } else if isSelection {
             colorEdit.finish(vm)
             vm.applyToSelection(name, annotation)
         } else {
@@ -109,6 +119,7 @@ struct ToolOptionsBar: View {
 
     /// Eine Änderung aus dem Farbfenster: an der Auswahl zusammengefasst zu einem Undo-Schritt.
     private func editFromColorPanel(_ name: String, tool: () -> Void, annotation: (inout Annotation) -> Void) {
+        if editsText { return vm.applyToEditingText(annotation) }
         guard isSelection else { return tool() }
         let ids = vm.selection
         colorEdit.change(vm, name) { model in
@@ -118,7 +129,8 @@ struct ToolOptionsBar: View {
         }
     }
 
-    /// Regler: an der Auswahl ein Undo-Schritt je Zug, sonst direkt an den Werkzeug-Optionen.
+    /// Regler: am bearbeiteten Text in dessen Schritt, an der Auswahl ein Undo-Schritt je Zug, sonst direkt an
+    /// den Werkzeug-Optionen.
     /// `remember` merkt den Wert an einer Auswahl als „zuletzt genutzt“: einmal je Zug bzw. Schritt,
     /// nicht bei jedem Zwischenwert.
     private func slider(_ title: String, actionName: String, range: ClosedRange<Double>, value: Double,
@@ -127,10 +139,15 @@ struct ToolOptionsBar: View {
                         annotation: @escaping (inout Annotation, Double) -> Void) -> some View {
         OptionSlider(
             title: title, range: range, value: value,
-            begin: { if isSelection { vm.beginContinuousChange() } },
+            begin: { if isSelection, !editsText { vm.beginContinuousChange() } },
             change: { newValue, live in
-                if isSelection {
+                if editsText {
+                    vm.applyToEditingText { annotation(&$0, newValue) }
+                    if !live { remember(newValue) }
+                } else if isSelection {
                     if live {
+                        // Falls die Textbearbeitung mitten im Zug endete, beginnt hier sein eigener Schritt.
+                        vm.beginContinuousChange()
                         vm.applyLiveToSelection { annotation(&$0, newValue) }
                     } else {
                         colorEdit.finish(vm)
@@ -143,7 +160,7 @@ struct ToolOptionsBar: View {
             },
             end: { lastValue in
                 guard isSelection else { return }
-                vm.endContinuousChange(actionName)
+                if !editsText { vm.endContinuousChange(actionName) }
                 if let lastValue { remember(lastValue) }
             })
     }

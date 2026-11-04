@@ -69,11 +69,15 @@ extension EditorViewModel {
     /// Sichert das Projekt (`.screenx`). Ohne Dateiort, oder mit `choosingLocation`
     /// („Projekt sichern unter …“), wird zuerst nach dem Ort gefragt. Schlägt das Schreiben fehl
     /// (z. B. weil der Ort schreibgeschützt ist), erscheint die Meldung und danach der Sichern-Dialog,
-    /// damit das Projekt an einem anderen Ort gesichert werden kann.
+    /// damit das Projekt an einem anderen Ort gesichert werden kann. Offene Bearbeitungen (Text, Mauszug,
+    /// Farbschritt) werden vorher abgeschlossen.
     /// `false`, wenn abgebrochen wurde oder das Sichern fehlschlug.
     @discardableResult
     func saveProject(choosingLocation: Bool = false) -> Bool {
         guard !isReadOnly else { return false }
+        // Gesichert wird ein abgeschlossener Stand: sonst wäre das Fenster danach „unverändert“, obwohl
+        // Esc bzw. ein Abbruch das Modell noch gegenüber der Datei ändern würde.
+        finishOpenEdits()
         var target = choosingLocation ? nil : fileURL
         while true {
             guard let url = target ?? chooseProjectLocation() else { return false }

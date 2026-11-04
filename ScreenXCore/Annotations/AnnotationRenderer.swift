@@ -33,7 +33,8 @@ public enum AnnotationRenderer {
         // The visible part of the original (the crop), in original pixels.
         let visible = clipRect.applying(originToCanvas.inverted())
 
-        for annotation in annotations where intersects(annotation, visible) {
+        // Annotations lying entirely in the cropped-away area are skipped, so they cannot show up in the padding.
+        for annotation in annotations where AnnotationGeometry.isVisible(annotation, in: visible) {
             ctx.saveGState()
             switch annotation.kind {
             case .blur, .highlight:
@@ -53,21 +54,6 @@ public enum AnnotationRenderer {
                  noteShadowOffset: noteShadowOffset, noteShadowBlur: noteShadowBlur)
             ctx.restoreGState()
         }
-    }
-
-    /// Whether the rotated bounding box (widened by half the stroke) meets `visible`. Annotations lying
-    /// entirely in the cropped-away area are skipped, so they cannot show up in the padding.
-    private static func intersects(_ a: Annotation, _ visible: CGRect) -> Bool {
-        let box = AnnotationGeometry.bounds(a)
-        let half = max(CGFloat(a.strokeWidth) / 2, 1)
-        var rotated = box
-        if a.rotation != 0 {
-            let rotation = CGAffineTransform(translationX: box.midX, y: box.midY)
-                .rotated(by: CGFloat(a.rotation))
-                .translatedBy(x: -box.midX, y: -box.midY)
-            rotated = box.applying(rotation)
-        }
-        return rotated.insetBy(dx: -half, dy: -half).intersects(visible)
     }
 
     private static func draw(_ a: Annotation, in ctx: CGContext, original: CGImage, originalScale: CGFloat,

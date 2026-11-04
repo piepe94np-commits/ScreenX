@@ -27,6 +27,22 @@ extension AnnotationGeometry {
                 CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)].map { toOriginal($0, of: a) }
     }
 
+    /// Whether the annotation shows on a canvas whose visible part of the original is `visible` (the crop, or
+    /// the whole original): its rotated bounding box, widened by half the stroke (at least 1 px), meets
+    /// `visible`. The renderer draws only these, and only these can be hit, selected or edited.
+    public static func isVisible(_ a: Annotation, in visible: CGRect) -> Bool {
+        let box = bounds(a)
+        let half = max(CGFloat(a.strokeWidth) / 2, 1)
+        var rotated = box
+        if a.rotation != 0 {
+            let rotation = CGAffineTransform(translationX: box.midX, y: box.midY)
+                .rotated(by: CGFloat(a.rotation))
+                .translatedBy(x: -box.midX, y: -box.midY)
+            rotated = box.applying(rotation)
+        }
+        return rotated.insetBy(dx: -half, dy: -half).intersects(visible)
+    }
+
     /// Annotations whose rotated bounds (widened by half the stroke, so straight lines count) touch `rect`,
     /// in array order.
     public static func ids(intersecting rect: CGRect, in annotations: [Annotation]) -> [UUID] {

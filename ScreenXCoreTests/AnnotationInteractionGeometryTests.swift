@@ -110,4 +110,28 @@ struct AnnotationInteractionGeometryTests {
             AnnotationGeometry.resized(a, handle: .bottomRight, toOriginal: CGPoint(x: 200, y: 60), constrained: true))
         #expect(r == CGRect(x: 0, y: 0, width: 200, height: 100))
     }
+
+    @Test func visibilityFollowsTheVisibleArea() {
+        let crop = CGRect(x: 100, y: 100, width: 200, height: 100)
+        let inside = box(CGRect(x: 150, y: 120, width: 20, height: 20))
+        let outside = box(CGRect(x: 0, y: 0, width: 50, height: 50))
+        let overlapping = box(CGRect(x: 80, y: 80, width: 30, height: 30))
+        #expect(AnnotationGeometry.isVisible(inside, in: crop))
+        #expect(!AnnotationGeometry.isVisible(outside, in: crop))
+        #expect(AnnotationGeometry.isVisible(overlapping, in: crop))
+
+        // A horizontal line 2 px above the crop counts through half its stroke (6 px → 3 px), a thin one not.
+        let line = Annotation(kind: .shape(kind: .line, rect: CGRect(x: 150, y: 98, width: 50, height: 0),
+                                           filled: false), strokeWidth: 6)
+        var thin = line
+        thin.strokeWidth = 1
+        #expect(AnnotationGeometry.isVisible(line, in: crop))
+        #expect(!AnnotationGeometry.isVisible(thin, in: crop))
+
+        // Rotated by 45° the 100 × 10 bar around (200, 80) reaches down into the crop (y ≥ 100).
+        var bar = box(CGRect(x: 150, y: 75, width: 100, height: 10))
+        #expect(!AnnotationGeometry.isVisible(bar, in: crop))
+        bar.rotation = .pi / 4
+        #expect(AnnotationGeometry.isVisible(bar, in: crop))
+    }
 }
