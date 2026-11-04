@@ -192,7 +192,20 @@
     "Verpixeln" : {},
     "Weichzeichnen" : {},
     "Zuschnitt" : {},
-    "Zähler" : {}
+    "Zähler" : {},
+    "Bewegen" : {},
+    "Punkt verschieben" : {},
+    "Größe ändern" : {},
+    "Drehen" : {},
+    "Pfeil hinzufügen" : {},
+    "Form hinzufügen" : {},
+    "Text hinzufügen" : {},
+    "Notiz hinzufügen" : {},
+    "Zähler hinzufügen" : {},
+    "Unschärfe hinzufügen" : {},
+    "Marker hinzufügen" : {},
+    "Ziehen, um das Bild als Datei abzulegen" : {},
+    "Bild herausziehen" : {}
   },
   "version" : "1.0"
 }

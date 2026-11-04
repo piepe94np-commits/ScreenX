@@ -3,7 +3,8 @@ import ScreenXCore
 import SwiftUI
 
 /// Arbeitsfläche: zeigt die gerenderte Vorschau eingepasst oder in festen Zoomstufen mit Scrollen.
-/// Unten links Zoom-Steuerung und Ausgabegröße; Ziehen aus der Fläche exportiert eine Datei.
+/// Über der Vorschau liegt die Interaktionsschicht für Anmerkungen. Unten links Zoom-Steuerung,
+/// Ausgabegröße und ein Griff, mit dem sich das fertige Bild als Datei herausziehen lässt.
 struct CanvasView: View {
     let vm: EditorViewModel
 
@@ -19,7 +20,7 @@ struct CanvasView: View {
             let scale = pointsPerPixel(viewport: geo.size)
             let size = CGSize(width: vm.canvasSize.width * scale, height: vm.canvasSize.height * scale)
             ScrollView([.horizontal, .vertical]) {
-                canvas(size: size)
+                canvas(size: size, scale: scale)
                     .frame(width: max(size.width + 2 * Self.margin, geo.size.width),
                            height: max(size.height + 2 * Self.margin, geo.size.height))
             }
@@ -50,7 +51,7 @@ struct CanvasView: View {
 
     // MARK: - Fläche
 
-    private func canvas(size: CGSize) -> some View {
+    private func canvas(size: CGSize, scale: CGFloat) -> some View {
         ZStack {
             // Schachbrett nur innerhalb der Fläche: sichtbar, wo das Bild transparent ist.
             Image(nsImage: Self.checkerTile)
@@ -60,15 +61,13 @@ struct CanvasView: View {
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
-                ThumbnailDragView(
-                    image: NSImage(cgImage: preview, size: size),
-                    makeFile: { try vm.makeDragFile() },
-                    onClick: nil,
-                    onDragEnded: { _ in })
             } else {
                 ProgressView()
                     .controlSize(.small)
             }
+            AnnotationInteraction(
+                vm: vm, mapping: vm.canvasMapping(viewScale: scale), viewScale: scale,
+                annotations: vm.model.annotations, selection: vm.selection, tool: vm.tool)
         }
         .frame(width: size.width, height: size.height)
     }
@@ -128,7 +127,29 @@ struct CanvasView: View {
                 .font(.callout)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+
+            if let preview = vm.preview {
+                dragHandle(preview)
+            }
         }
+    }
+
+    /// Ziehen am Symbol übergibt das exportierte Bild als Datei (die Fläche selbst gehört den Werkzeugen).
+    private func dragHandle(_ preview: CGImage) -> some View {
+        let side: CGFloat = 22
+        return Image(systemName: "square.and.arrow.up")
+            .foregroundStyle(.secondary)
+            .frame(width: side, height: side)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+            .overlay {
+                ThumbnailDragView(
+                    image: NSImage(cgImage: preview, size: NSSize(width: side, height: side)),
+                    makeFile: { try vm.makeDragFile() },
+                    onClick: nil,
+                    onDragEnded: { _ in })
+            }
+            .help("Ziehen, um das Bild als Datei abzulegen")
+            .accessibilityLabel(String(localized: "Bild herausziehen"))
     }
 
     private var sizeText: String {

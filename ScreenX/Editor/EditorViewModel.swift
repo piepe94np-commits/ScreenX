@@ -49,6 +49,9 @@ final class EditorViewModel {
     /// IDs der ausgewählten Anmerkungen. Die Auswahl ist kein Teil des Dokuments und kein Undo-Schritt;
     /// IDs, die es nach Undo/Redo nicht mehr gibt, fallen heraus.
     var selection: Set<UUID> = []
+    /// Text- bzw. Notiz-Anmerkung, deren Text bearbeitet werden soll (gesetzt beim Erzeugen per Klick
+    /// oder Ziehen); die Textbearbeitung über der Arbeitsfläche öffnet sich dafür und setzt sie zurück.
+    var editingTextID: UUID?
 
     @ObservationIgnored var undoManager: UndoManager? {
         didSet { refreshUndoState() }
@@ -106,10 +109,19 @@ final class EditorViewModel {
         model.original.scale > 0 ? CGFloat(model.original.scale) : 1
     }
 
-    /// Größe der Arbeitsfläche in Pixeln des Originals.
-    var canvasSize: CGSize {
+    /// Aufteilung der Arbeitsfläche in Pixeln des Originals.
+    var canvasLayout: CanvasLayout {
         let content = model.crop?.size ?? CGSize(width: original.width, height: original.height)
-        return CanvasLayout.compute(contentSize: content, style: model.style).canvasSize
+        return CanvasLayout.compute(contentSize: content, style: model.style)
+    }
+
+    /// Größe der Arbeitsfläche in Pixeln des Originals.
+    var canvasSize: CGSize { canvasLayout.canvasSize }
+
+    /// Abbildung zwischen Ansichtspunkten der Arbeitsfläche und Pixeln des Originals.
+    /// `viewScale` sind Ansichtspunkte je Pixel der Arbeitsfläche.
+    func canvasMapping(viewScale: CGFloat) -> CanvasMapping {
+        CanvasMapping(layout: canvasLayout, crop: model.crop, viewScale: viewScale)
     }
 
     private var renderInput: RenderInput {
