@@ -100,7 +100,7 @@ struct AnnotationInteractionGeometryTests {
                                                     constrained: true)
         guard case let .shape(.line, rect, _) = movedStart.kind else { Issue.record("not a line"); return }
         // End stays at (50, 0); the start snaps straight below-left at 135°.
-        #expect(close(CGPoint(x: rect.origin.x + rect.width, y: rect.origin.y + rect.height), CGPoint(x: 50, y: 0)))
+        #expect(close(CGPoint(x: rect.origin.x + rect.size.width, y: rect.origin.y + rect.size.height), CGPoint(x: 50, y: 0)))
         #expect(abs((rect.origin.x - 50) + rect.origin.y) < 1e-9)
     }
 
