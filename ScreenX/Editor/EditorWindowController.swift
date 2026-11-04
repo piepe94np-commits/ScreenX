@@ -1,0 +1,241 @@
+import AppKit
+import Observation
+import ScreenXCore
+import SwiftUI
+
+/// Ein Editor-Fenster. Offene Controller werden in `controllers` gehalten, bis ihr Fenster schließt.
+/// Solange ein Editor offen ist, erscheint ScreenX im Dock und im Programmwechsler, mit eigener Menüleiste.
+@MainActor
+final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
+    private static var controllers: Set<EditorWindowController> = []
+    private static let defaultSize = NSSize(width: 1280, height: 800)
+    private static let minimumSize = NSSize(width: 900, height: 600)
+
+    let viewModel: EditorViewModel
+    private let undoStack = UndoManager()
+    private var undoObservers: [any NSObjectProtocol] = []
+
+    static func open(_ vm: EditorViewModel) {
+        let controller = EditorWindowController(viewModel: vm)
+        controllers.insert(controller)
+        NSApp.setActivationPolicy(.regular)
+        EditorMenu.install()
+        controller.showWindow(nil)
+        NSApp.activate()
+    }
+
+    /// Holt das Fenster mit dieser Datei nach vorn. `false`, wenn keines offen ist.
+    static func focus(fileURL: URL) -> Bool {
+        let target = fileURL.standardizedFileURL
+        guard let controller = controllers.first(where: { $0.viewModel.fileURL?.standardizedFileURL == target })
+        else { return false }
+        controller.showWindow(nil)
+        NSApp.activate()
+        return true
+    }
+
+    private init(viewModel: EditorViewModel) {
+        self.viewModel = viewModel
+        let hosting = NSHostingController(rootView: EditorView(vm: viewModel))
+        hosting.sizingOptions = []
+        hosting.sceneBridgingOptions = [.toolbars]
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: Self.defaultSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.contentViewController = hosting
+        window.setContentSize(Self.defaultSize)
+        window.contentMinSize = Self.minimumSize
+        window.toolbarStyle = .unified
+        window.tabbingMode = .disallowed
+        window.isReleasedWhenClosed = false
+        window.center()
+        super.init(window: window)
+        window.delegate = self
+        viewModel.undoManager = undoStack
+        observeUndo()
+        observeViewModel()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    // MARK: - Beobachtung
+
+    /// Titel, Dateisymbol und Änderungspunkt folgen dem ViewModel.
+    private func observeViewModel() {
+        withObservationTracking {
+            window?.title = viewModel.title
+            window?.representedURL = viewModel.fileURL
+            window?.isDocumentEdited = viewModel.isDirty
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observeViewModel() }
+        }
+    }
+
+    private func observeUndo() {
+        let names: [Notification.Name] = [
+            .NSUndoManagerDidCloseUndoGroup, .NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange,
+        ]
+        undoObservers = names.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: undoStack, queue: .main) {
+                [weak viewModel] _ in
+                MainActor.assumeIsolated { viewModel?.refreshUndoState() }
+            }
+        }
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        undoStack
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        EditorMenu.install()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard viewModel.isDirty else { return true }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Änderungen sichern?")
+        alert.informativeText = String(localized: "Ohne Sichern gehen die Änderungen verloren.")
+        alert.addButton(withTitle: String(localized: "Sichern"))
+        let discard = alert.addButton(withTitle: String(localized: "Nicht sichern"))
+        discard.keyEquivalent = "d"
+        discard.keyEquivalentModifierMask = .command
+        let cancel = alert.addButton(withTitle: String(localized: "Abbrechen"))
+        cancel.keyEquivalent = "\u{1b}"
+        Task { [weak self] in
+            let response = await alert.beginSheetModal(for: sender)
+            self?.finishClose(response)
+        }
+        return false
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        viewModel.tearDown()
+        for observer in undoObservers { NotificationCenter.default.removeObserver(observer) }
+        undoObservers = []
+        undoStack.removeAllActions()
+        Self.controllers.remove(self)
+        if Self.controllers.isEmpty {
+            EditorMenu.uninstall()
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    private func finishClose(_ response: NSApplication.ModalResponse) {
+        switch response {
+        case .alertFirstButtonReturn:
+            // Abgebrochener oder fehlgeschlagener Sicherungsversuch lässt das Fenster offen.
+            if viewModel.saveProject() { window?.close() }
+        case .alertSecondButtonReturn:
+            window?.close()
+        default:
+            break
+        }
+    }
+
+    // MARK: - Menübefehle (über die Responder-Kette)
+
+    @objc func openProject(_ sender: Any?) { viewModel.openProject() }
+    @objc func saveProject(_ sender: Any?) { viewModel.saveProject() }
+    @objc func exportImageAs(_ sender: Any?) { viewModel.exportAs(settings: viewModel.settingsProvider()) }
+    @objc func copy(_ sender: Any?) { viewModel.copy() }
+    @objc func undo(_ sender: Any?) { undoStack.undo() }
+    @objc func redo(_ sender: Any?) { undoStack.redo() }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(saveProject(_:)):
+            return !viewModel.isReadOnly
+        case #selector(undo(_:)):
+            menuItem.title = undoStack.undoMenuItemTitle
+            return undoStack.canUndo
+        case #selector(redo(_:)):
+            menuItem.title = undoStack.redoMenuItemTitle
+            return undoStack.canRedo
+        default:
+            return true
+        }
+    }
+}
+
+/// Hauptmenü, solange Editor-Fenster offen sind. Es macht die Tastenkürzel ⌘O, ⌘S, ⇧⌘S, ⌘W,
+/// ⌘Z, ⇧⌘Z und ⌘C (sowie Ausschneiden/Einfügen für Textfelder) verfügbar.
+@MainActor
+enum EditorMenu {
+    private static var menu: NSMenu?
+    private static var previous: NSMenu?
+
+    static func install() {
+        let editorMenu = menu ?? build()
+        menu = editorMenu
+        guard NSApp.mainMenu !== editorMenu else { return }
+        previous = NSApp.mainMenu
+        NSApp.mainMenu = editorMenu
+        NSApp.windowsMenu = editorMenu.items.last?.submenu
+    }
+
+    static func uninstall() {
+        guard let menu, NSApp.mainMenu === menu else { return }
+        NSApp.mainMenu = previous
+        previous = nil
+    }
+
+    private static func build() -> NSMenu {
+        let main = NSMenu()
+        add(to: main, title: "ScreenX", items: [
+            item(String(localized: "Über ScreenX"), #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+            .separator(),
+            item(String(localized: "ScreenX ausblenden"), #selector(NSApplication.hide(_:)), "h"),
+            item(String(localized: "Andere ausblenden"), #selector(NSApplication.hideOtherApplications(_:)),
+                 "h", [.command, .option]),
+            item(String(localized: "Alle einblenden"), #selector(NSApplication.unhideAllApplications(_:))),
+            .separator(),
+            item(String(localized: "ScreenX beenden"), #selector(NSApplication.terminate(_:)), "q"),
+        ])
+        add(to: main, title: String(localized: "Ablage"), items: [
+            item(String(localized: "Öffnen …"), #selector(EditorWindowController.openProject(_:)), "o"),
+            .separator(),
+            item(String(localized: "Schließen"), #selector(NSWindow.performClose(_:)), "w"),
+            item(String(localized: "Projekt sichern"), #selector(EditorWindowController.saveProject(_:)), "s"),
+            item(String(localized: "Sichern unter …"), #selector(EditorWindowController.exportImageAs(_:)),
+                 "s", [.command, .shift]),
+        ])
+        add(to: main, title: String(localized: "Bearbeiten"), items: [
+            item(String(localized: "Widerrufen"), #selector(EditorWindowController.undo(_:)), "z"),
+            item(String(localized: "Wiederholen"), #selector(EditorWindowController.redo(_:)), "z", [.command, .shift]),
+            .separator(),
+            item(String(localized: "Ausschneiden"), #selector(NSText.cut(_:)), "x"),
+            item(String(localized: "Kopieren"), #selector(EditorWindowController.copy(_:)), "c"),
+            item(String(localized: "Einfügen"), #selector(NSText.paste(_:)), "v"),
+            item(String(localized: "Alles auswählen"), #selector(NSText.selectAll(_:)), "a"),
+        ])
+        add(to: main, title: String(localized: "Fenster"), items: [
+            item(String(localized: "Minimieren"), #selector(NSWindow.performMiniaturize(_:)), "m"),
+            item(String(localized: "Zoomen"), #selector(NSWindow.performZoom(_:))),
+        ])
+        return main
+    }
+
+    private static func add(to main: NSMenu, title: String, items: [NSMenuItem]) {
+        let submenu = NSMenu(title: title)
+        for item in items { submenu.addItem(item) }
+        let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        holder.submenu = submenu
+        main.addItem(holder)
+    }
+
+    private static func item(
+        _ title: String, _ action: Selector, _ key: String = "",
+        _ modifiers: NSEvent.ModifierFlags = .command
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = modifiers
+        return item
+    }
+}
