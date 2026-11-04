@@ -3,15 +3,15 @@ import SwiftUI
 
 @main
 struct ScreenXApp: App {
-    @State private var coordinator = AppCoordinator()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         MenuBarExtra("ScreenX", systemImage: "camera.viewfinder") {
-            MenuBarContent(coordinator: coordinator)
+            MenuBarContent(coordinator: appDelegate.coordinator)
         }
 
         Settings {
-            SettingsView(coordinator: coordinator)
+            SettingsView(coordinator: appDelegate.coordinator)
         }
     }
 }

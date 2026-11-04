@@ -2,14 +2,15 @@ import AppKit
 import Observation
 import OSLog
 import ScreenXCore
+import SwiftUI
 import UserNotifications
 
-/// Verbindet Tastenkürzel, Menü, Aufnahme und Schnellzugriff. Hält die Einstellungen und
+/// Verbindet Tastenkürzel, Menü, Aufnahme, Schnellzugriff und Editor. Hält die Einstellungen und
 /// speichert sie bei jeder Änderung.
 @MainActor
 @Observable
 final class AppCoordinator {
-    nonisolated private static let logger = Logger(subsystem: "com.screenx.app", category: "app")
+    nonisolated static let logger = Logger(subsystem: "com.screenx.app", category: "app")
 
     /// Schreibt bei Änderung über den `SettingsStore` und registriert die Tastenkürzel neu.
     var settings: AppSettings {
@@ -38,6 +39,8 @@ final class AppCoordinator {
     @ObservationIgnored private var recordingMonitor: Any?
     /// Beenden die Aufnahme, wenn die App inaktiv wird oder das Einstellungsfenster schließt.
     @ObservationIgnored private var recordingObservers: [any NSObjectProtocol] = []
+    /// SwiftUI-Aktion zum Öffnen der Einstellungen; das Menüleisten-Menü trägt sie ein.
+    @ObservationIgnored var openSettingsAction: OpenSettingsAction?
 
     init(store: SettingsStore = SettingsStore(defaults: .standard)) {
         self.store = store
@@ -45,15 +48,19 @@ final class AppCoordinator {
         let service = CaptureService()
         self.service = service
         self.overlay = OverlayController(service: service)
-        // `onEdit` bleibt in M1 nil.
-        quickAccess = QuickAccessController { [weak self] in
+        let quickAccess = QuickAccessController { [weak self] in
             self?.settings ?? .defaults(home: FileManager.default.homeDirectoryForCurrentUser)
         }
+        self.quickAccess = quickAccess
         hotkeyCenter = HotkeyCenter { [weak self] mode in
             guard let self else { return }
             Task { await self.capture(mode) }
         }
         registerHotkeys()
+        quickAccess.onEdit = { [weak self] capture in self?.openEditor(for: capture) }
+        // Editor und Coordinator teilen dieselben Einstellungen.
+        EditorWindowController.settingsSource = Bindable(self).settings
+        EditorWindowController.settingsOpener = { [weak self] in self?.showSettings() }
         Task { @MainActor in ScreenPermission.requestAtLaunch() }
     }
 
@@ -81,7 +88,10 @@ final class AppCoordinator {
         // `nil`: vom Benutzer abgebrochen.
         guard let result else { return }
         lastCapture = result
-        quickAccess?.show(result)
+        switch settings.afterCapture {
+        case .quickAccess: quickAccess?.show(result)
+        case .openEditor: openEditor(for: result)
+        }
     }
 
     /// Zeigt die letzte Aufnahme erneut im Schnellzugriff.

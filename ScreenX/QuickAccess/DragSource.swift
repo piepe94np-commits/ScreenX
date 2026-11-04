@@ -94,6 +94,8 @@ final class DragSourceView: NSView, NSDraggingSource {
         } catch {
             Self.logger.error("Datei zum Ziehen fehlgeschlagen: \(error.localizedDescription, privacy: .public)")
             isDragging = false
+            // Das folgende mouseUp zählt nicht als Klick (der würde sonst den Editor öffnen).
+            mouseDownPoint = nil
             onDragEnded?(false)
             return
         }

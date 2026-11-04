@@ -20,6 +20,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     static var settingsSource: Binding<AppSettings>?
     /// Ersatz ohne `settingsSource`: liest und sichert direkt über den `SettingsStore`.
     private static let storedSettings = Bindable(StoredSettings()).value
+    /// Öffnet das Einstellungsfenster („Einstellungen …“ im Editor-Menü); setzt der `AppCoordinator`.
+    static var settingsOpener: (() -> Void)?
+
+    /// Offene Editoren mit ungesicherten Änderungen.
+    static var dirtyEditors: [EditorWindowController] {
+        controllers.filter { $0.viewModel.isDirty }
+    }
 
     /// `settings` steuert Inspektor, Export und Werkzeugleiste dieses Fensters.
     static func open(_ vm: EditorViewModel, settings: Binding<AppSettings>? = nil) {
@@ -152,6 +159,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     // MARK: - Menübefehle (über die Responder-Kette)
 
+    @objc func showSettings(_ sender: Any?) { Self.settingsOpener?() }
     @objc func openProject(_ sender: Any?) { viewModel.openProject() }
     @objc func saveProject(_ sender: Any?) { viewModel.saveProject() }
     @objc func exportImageAs(_ sender: Any?) { viewModel.exportAs(settings: viewModel.settingsProvider()) }
@@ -195,81 +203,5 @@ private final class StoredSettings {
     init(store: SettingsStore = SettingsStore(defaults: .standard)) {
         self.store = store
         stored = store.load()
-    }
-}
-
-/// Hauptmenü, solange Editor-Fenster offen sind. Es macht die Tastenkürzel ⌘O, ⌘S, ⇧⌘S, ⌘W,
-/// ⌘Z, ⇧⌘Z und ⌘C (sowie Ausschneiden/Einfügen für Textfelder) verfügbar.
-@MainActor
-enum EditorMenu {
-    private static var menu: NSMenu?
-    private static var previous: NSMenu?
-
-    static func install() {
-        let editorMenu = menu ?? build()
-        menu = editorMenu
-        guard NSApp.mainMenu !== editorMenu else { return }
-        previous = NSApp.mainMenu
-        NSApp.mainMenu = editorMenu
-        NSApp.windowsMenu = editorMenu.items.last?.submenu
-    }
-
-    static func uninstall() {
-        guard let menu, NSApp.mainMenu === menu else { return }
-        NSApp.mainMenu = previous
-        previous = nil
-    }
-
-    private static func build() -> NSMenu {
-        let main = NSMenu()
-        add(to: main, title: "ScreenX", items: [
-            item(String(localized: "Über ScreenX"), #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
-            .separator(),
-            item(String(localized: "ScreenX ausblenden"), #selector(NSApplication.hide(_:)), "h"),
-            item(String(localized: "Andere ausblenden"), #selector(NSApplication.hideOtherApplications(_:)),
-                 "h", [.command, .option]),
-            item(String(localized: "Alle einblenden"), #selector(NSApplication.unhideAllApplications(_:))),
-            .separator(),
-            item(String(localized: "ScreenX beenden"), #selector(NSApplication.terminate(_:)), "q"),
-        ])
-        add(to: main, title: String(localized: "Ablage"), items: [
-            item(String(localized: "Öffnen …"), #selector(EditorWindowController.openProject(_:)), "o"),
-            .separator(),
-            item(String(localized: "Schließen"), #selector(NSWindow.performClose(_:)), "w"),
-            item(String(localized: "Projekt sichern"), #selector(EditorWindowController.saveProject(_:)), "s"),
-            item(String(localized: "Sichern unter …"), #selector(EditorWindowController.exportImageAs(_:)),
-                 "s", [.command, .shift]),
-        ])
-        add(to: main, title: String(localized: "Bearbeiten"), items: [
-            item(String(localized: "Widerrufen"), #selector(EditorWindowController.undo(_:)), "z"),
-            item(String(localized: "Wiederholen"), #selector(EditorWindowController.redo(_:)), "z", [.command, .shift]),
-            .separator(),
-            item(String(localized: "Ausschneiden"), #selector(NSText.cut(_:)), "x"),
-            item(String(localized: "Kopieren"), #selector(EditorWindowController.copy(_:)), "c"),
-            item(String(localized: "Einfügen"), #selector(NSText.paste(_:)), "v"),
-            item(String(localized: "Alles auswählen"), #selector(NSText.selectAll(_:)), "a"),
-        ])
-        add(to: main, title: String(localized: "Fenster"), items: [
-            item(String(localized: "Minimieren"), #selector(NSWindow.performMiniaturize(_:)), "m"),
-            item(String(localized: "Zoomen"), #selector(NSWindow.performZoom(_:))),
-        ])
-        return main
-    }
-
-    private static func add(to main: NSMenu, title: String, items: [NSMenuItem]) {
-        let submenu = NSMenu(title: title)
-        for item in items { submenu.addItem(item) }
-        let holder = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        holder.submenu = submenu
-        main.addItem(holder)
-    }
-
-    private static func item(
-        _ title: String, _ action: Selector, _ key: String = "",
-        _ modifiers: NSEvent.ModifierFlags = .command
-    ) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        item.keyEquivalentModifierMask = modifiers
-        return item
     }
 }

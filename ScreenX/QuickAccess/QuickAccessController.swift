@@ -15,7 +15,7 @@ final class QuickAccessController {
     private static let slideDistance: CGFloat = 24
     private static let feedbackDuration: Duration = .seconds(1)
 
-    /// In M1 `nil`: dann gibt es keinen „Bearbeiten“-Button und ein Klick aufs Bild tut nichts.
+    /// Öffnet den Editor. `nil`: kein „Bearbeiten“-Button, ein Klick aufs Bild tut nichts.
     var onEdit: ((Capture) -> Void)?
 
     private let settings: () -> AppSettings

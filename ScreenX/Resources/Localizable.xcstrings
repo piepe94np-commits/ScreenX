@@ -136,7 +136,15 @@
     "Weichheit" : {},
     "Winkel" : {},
     "Ändern …" : {},
-    "− Farbe" : {}
+    "− Farbe" : {},
+    "Es gibt ungesicherte Änderungen." : {},
+    "Alle sichern" : {},
+    "Letzte Aufnahme bearbeiten" : {},
+    "Datei öffnen …" : {},
+    "Nach der Aufnahme" : {},
+    "Schnellzugriff zeigen" : {},
+    "Editor öffnen" : {},
+    "Zuletzt genutzten Stil anwenden" : {}
   },
   "version" : "1.0"
 }

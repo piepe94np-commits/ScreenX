@@ -16,7 +16,7 @@ struct SettingsView: View {
     }
 }
 
-/// Reiter „Allgemein“. Die Option „Nach der Aufnahme: Editor öffnen“ folgt mit M2.
+/// Reiter „Allgemein“.
 private struct GeneralSettingsView: View {
     @Bindable var coordinator: AppCoordinator
 
@@ -59,6 +59,11 @@ private struct GeneralSettingsView: View {
             }
 
             Section(String(localized: "Aufnahme")) {
+                Picker(String(localized: "Nach der Aufnahme"), selection: $coordinator.settings.afterCapture) {
+                    Text(String(localized: "Schnellzugriff zeigen")).tag(AfterCaptureAction.quickAccess)
+                    Text(String(localized: "Editor öffnen")).tag(AfterCaptureAction.openEditor)
+                }
+
                 LabeledContent(String(localized: "Schnellzugriff-Dauer")) {
                     HStack {
                         Slider(value: $coordinator.settings.quickAccessDuration, in: 3...30, step: 1)
@@ -69,6 +74,8 @@ private struct GeneralSettingsView: View {
                 }
 
                 Toggle(String(localized: "Fensterschatten aufnehmen"), isOn: $coordinator.settings.windowShadow)
+
+                Toggle(String(localized: "Zuletzt genutzten Stil anwenden"), isOn: $coordinator.settings.applyLastStyle)
             }
         }
         .formStyle(.grouped)

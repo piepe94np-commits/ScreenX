@@ -100,4 +100,31 @@ struct StyleTests {
     @Test func presetsCount() {
         #expect(GradientPresets.all.count == 12)
     }
+
+    @Test func newCaptureStyleUsesLastStyleWhenEnabled() {
+        var last = Style.default
+        last.padding = 120
+        last.background = .solid(ColorValue(red: 1, green: 0, blue: 0, alpha: 1))
+        last.keepWindowShadow = true
+        let style = Style.forNewCapture(lastStyle: last, applyLastStyle: true)
+        #expect(style.padding == 120)
+        #expect(style.background == last.background)
+        #expect(style.keepWindowShadow == false)
+    }
+
+    @Test func newCaptureStyleIsDefaultWhenDisabledOrMissing() {
+        var last = Style.default
+        last.padding = 120
+        #expect(Style.forNewCapture(lastStyle: last, applyLastStyle: false) == .default)
+        #expect(Style.forNewCapture(lastStyle: nil, applyLastStyle: true) == .default)
+    }
+
+    @Test func newCaptureStyleReplacesImageBackground() {
+        var last = Style.default
+        last.cornerRadius = 30
+        last.background = .image(file: "background.png")
+        let style = Style.forNewCapture(lastStyle: last, applyLastStyle: true)
+        #expect(style.background == Style.default.background)
+        #expect(style.cornerRadius == 30)
+    }
 }
