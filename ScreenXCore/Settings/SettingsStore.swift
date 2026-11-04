@@ -1,7 +1,10 @@
 import Foundation
+import os
 
 public final class SettingsStore: @unchecked Sendable {
     static let key = "settings.v1"
+
+    private static let logger = Logger(subsystem: "com.screenx.app", category: "settings")
 
     private let defaults: UserDefaults
     private let home: URL
@@ -12,8 +15,10 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     public func load() -> AppSettings {
+        let decoder = JSONDecoder()
+        decoder.userInfo[AppSettings.homeUserInfoKey] = home
         guard let data = defaults.data(forKey: Self.key),
-              let settings = try? JSONDecoder().decode(AppSettings.self, from: data)
+              let settings = try? decoder.decode(AppSettings.self, from: data)
         else {
             return .defaults(home: home)
         }
@@ -21,7 +26,10 @@ public final class SettingsStore: @unchecked Sendable {
     }
 
     public func save(_ s: AppSettings) {
-        guard let data = try? JSONEncoder().encode(s) else { return }
-        defaults.set(data, forKey: Self.key)
+        do {
+            defaults.set(try JSONEncoder().encode(s), forKey: Self.key)
+        } catch {
+            Self.logger.error("Failed to encode settings: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }

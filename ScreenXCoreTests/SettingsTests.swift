@@ -58,4 +58,42 @@ struct SettingsTests {
         defer { suite.removePersistentDomain(forName: name) }
         #expect(SettingsStore(defaults: suite, home: home).load() == .defaults(home: home))
     }
+
+    @Test func decodesM1SettingsWithoutNewFields() throws {
+        let json = """
+        {"hotkeys":{"area":{"keyCode":21,"modifiers":6},"window":{"keyCode":23,"modifiers":6},"fullscreen":{"keyCode":20,"modifiers":6}},
+         "afterCapture":"openEditor","quickAccessDuration":12,"saveDirectory":"file:///Users/tester/Pictures/ScreenX/",
+         "exportFormat":"jpeg","jpegQuality":0.8,"windowShadow":true}
+        """
+        let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+        #expect(s.quickAccessDuration == 12)
+        #expect(s.afterCapture == .openEditor)
+        #expect(s.exportFormat == .jpeg)
+        #expect(s.exportScale == .original)
+        #expect(s.applyLastStyle == true)
+    }
+
+    @Test func missingHotkeyModeStaysEmpty() throws {
+        let json = #"{"hotkeys":{"area":{"keyCode":21,"modifiers":6}}}"#
+        let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+        #expect(s.hotkeys[.area] == KeyCombo(keyCode: 21, modifiers: [.option, .shift]))
+        #expect(s.hotkeys[.window] == nil)
+        #expect(s.hotkeys[.fullscreen] == nil)
+    }
+
+    @Test func missingHotkeysUseDefaults() throws {
+        let s = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        #expect(s.hotkeys.count == 3)
+    }
+
+    @Test func newFieldsRoundTrip() {
+        let name = "test-\(UUID())"
+        let suite = UserDefaults(suiteName: name)!
+        defer { suite.removePersistentDomain(forName: name) }
+        var settings = AppSettings.defaults(home: home)
+        settings.exportScale = .x2
+        settings.applyLastStyle = false
+        SettingsStore(defaults: suite, home: home).save(settings)
+        #expect(SettingsStore(defaults: suite, home: home).load() == settings)
+    }
 }
