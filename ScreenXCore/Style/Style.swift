@@ -112,6 +112,7 @@ public struct Style: Codable, Hashable, Sendable {
     public var padding: Double
     public var cornerRadius: Double
     public var shadow: ShadowStyle
+    /// Reserved: kept in the model and JSON for compatibility, but not used by the renderer and not shown in M2.
     public var keepWindowShadow: Bool
     public var aspect: AspectRatio
     public var alignment: ContentAlignment

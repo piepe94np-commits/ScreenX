@@ -162,19 +162,30 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func showSettings(_ sender: Any?) { Self.settingsOpener?() }
     @objc func openProject(_ sender: Any?) { viewModel.openProject() }
     @objc func saveProject(_ sender: Any?) { viewModel.saveProject() }
+    @objc func saveProjectAs(_ sender: Any?) { viewModel.saveProject(choosingLocation: true) }
     @objc func exportImageAs(_ sender: Any?) { viewModel.exportAs(settings: viewModel.settingsProvider()) }
-    @objc func copy(_ sender: Any?) { viewModel.copy() }
-    @objc func undo(_ sender: Any?) { viewModel.undo() }
-    @objc func redo(_ sender: Any?) { viewModel.redo() }
+    // Eigene Selektoren der Menüpunkte: Kein AppKit- oder SwiftUI-Responder kennt sie, also erreichen sie
+    // sicher diesen Controller (Fenster-Delegate), der offene Farbänderungen vor Undo/Redo abschließt.
+    @objc func editorUndo(_ sender: Any?) { viewModel.undo() }
+    @objc func editorRedo(_ sender: Any?) { viewModel.redo() }
+
+    /// Kopiert das gerenderte Bild; ist in einem Textfeld Text markiert, wird dieser kopiert.
+    @objc func editorCopy(_ sender: Any?) {
+        if let text = window?.firstResponder as? NSText, text.selectedRange().length > 0 {
+            text.copy(sender)
+        } else {
+            viewModel.copy()
+        }
+    }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(saveProject(_:)):
+        case #selector(saveProject(_:)), #selector(saveProjectAs(_:)):
             return !viewModel.isReadOnly
-        case #selector(undo(_:)):
+        case #selector(editorUndo(_:)):
             menuItem.title = undoStack.undoMenuItemTitle
             return undoStack.canUndo || viewModel.hasPendingEdit
-        case #selector(redo(_:)):
+        case #selector(editorRedo(_:)):
             menuItem.title = undoStack.redoMenuItemTitle
             return undoStack.canRedo
         default:

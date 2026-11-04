@@ -2,6 +2,9 @@ import AppKit
 
 /// Hauptmenü, solange Editor-Fenster offen sind. Es macht die Tastenkürzel ⌘,, ⌘O, ⌘S, ⇧⌘S, ⌘W,
 /// ⌘Z, ⇧⌘Z und ⌘C (sowie Ausschneiden/Einfügen für Textfelder) verfügbar.
+/// Widerrufen, Wiederholen und Kopieren nutzen eigene Selektoren (`editorUndo:` usw.) statt `undo:`/`copy:`:
+/// Diese Standard-Selektoren beantworten `NSWindow`, das Textfeld oder `NSHostingView` schon vor dem
+/// Controller in der Responder-Kette, und dann liefen offene Farbänderungen nicht vorher ab.
 @MainActor
 enum EditorMenu {
     private static var menu: NSMenu?
@@ -56,15 +59,17 @@ enum EditorMenu {
             .separator(),
             item(String(localized: "Schließen"), #selector(NSWindow.performClose(_:)), "w"),
             item(String(localized: "Projekt sichern"), #selector(EditorWindowController.saveProject(_:)), "s"),
+            item(String(localized: "Projekt sichern unter …"), #selector(EditorWindowController.saveProjectAs(_:)),
+                 "s", [.command, .option, .shift]),
             item(String(localized: "Sichern unter …"), #selector(EditorWindowController.exportImageAs(_:)),
                  "s", [.command, .shift]),
         ])
         add(to: main, title: String(localized: "Bearbeiten"), items: [
-            item(String(localized: "Widerrufen"), #selector(EditorWindowController.undo(_:)), "z"),
-            item(String(localized: "Wiederholen"), #selector(EditorWindowController.redo(_:)), "z", [.command, .shift]),
+            item(String(localized: "Widerrufen"), #selector(EditorWindowController.editorUndo(_:)), "z"),
+            item(String(localized: "Wiederholen"), #selector(EditorWindowController.editorRedo(_:)), "z", [.command, .shift]),
             .separator(),
             item(String(localized: "Ausschneiden"), #selector(NSText.cut(_:)), "x"),
-            item(String(localized: "Kopieren"), #selector(EditorWindowController.copy(_:)), "c"),
+            item(String(localized: "Kopieren"), #selector(EditorWindowController.editorCopy(_:)), "c"),
             item(String(localized: "Einfügen"), #selector(NSText.paste(_:)), "v"),
             item(String(localized: "Alles auswählen"), #selector(NSText.selectAll(_:)), "a"),
         ])

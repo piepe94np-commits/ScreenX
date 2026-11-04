@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ScreenXCore
 import SwiftUI
 
@@ -26,6 +27,8 @@ struct StylePresetMenu: View {
         }
         .fixedSize()
         .onAppear(perform: reload)
+        // Vorlagen, die ein anderes Editor-Fenster sichert oder löscht, erscheinen auch hier.
+        .onReceive(NotificationCenter.default.publisher(for: .stylePresetsDidChange)) { _ in reload() }
     }
 
     private func reload() {
@@ -47,13 +50,13 @@ struct StylePresetMenu: View {
 
     private func delete(_ preset: StylePreset) {
         StylePresetStore.shared.delete(id: preset.id)
-        reload()
+        NotificationCenter.default.post(name: .stylePresetsDidChange, object: nil)
     }
 
     private func saveCurrent() {
         guard let name = Self.askName() else { return }
         StylePresetStore.shared.save(StylePreset(name: name, style: vm.model.style))
-        reload()
+        NotificationCenter.default.post(name: .stylePresetsDidChange, object: nil)
     }
 
     /// Fragt den Namen der neuen Vorlage ab; `nil` bei Abbruch oder leerem Namen.
@@ -66,9 +69,17 @@ struct StylePresetMenu: View {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.placeholderString = String(localized: "Mein Stil")
         alert.accessoryView = field
+        // Erst nach `layout()` hängt das Feld im Fenster und kann den Fokus bekommen.
+        alert.layout()
         alert.window.initialFirstResponder = field
+        alert.window.makeFirstResponder(field)
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? nil : name
     }
+}
+
+extension Notification.Name {
+    /// Gesendet, nachdem eine Stil-Vorlage gesichert oder gelöscht wurde.
+    static let stylePresetsDidChange = Notification.Name("com.screenx.app.stylePresetsDidChange")
 }

@@ -1,6 +1,11 @@
 {
   "sourceLanguage" : "de",
   "strings" : {
+    "Bereits von einer anderen App belegt" : {},
+    "Tastenkürzel konnte nicht registriert werden (Fehler %d)" : {},
+    "Das Bild konnte nicht kodiert werden." : {},
+    "In den Ordner „%@“ kann nicht geschrieben werden." : {},
+    "Projekt sichern unter …" : {},
     "Diese Datei wurde mit einer neueren ScreenX-Version erstellt und kann nicht geöffnet werden." : {},
     "document.json fehlt" : {},
     "Kein Paket" : {},

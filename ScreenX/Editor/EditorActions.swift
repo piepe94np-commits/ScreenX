@@ -66,36 +66,50 @@ extension EditorViewModel {
         }
     }
 
-    /// Sichert das Projekt (`.screenx`). Ohne Dateiort wird zuerst gefragt.
+    /// Sichert das Projekt (`.screenx`). Ohne Dateiort, oder mit `choosingLocation`
+    /// („Projekt sichern unter …“), wird zuerst nach dem Ort gefragt. Schlägt das Schreiben fehl
+    /// (z. B. weil der Ort schreibgeschützt ist), erscheint die Meldung und danach der Sichern-Dialog,
+    /// damit das Projekt an einem anderen Ort gesichert werden kann.
     /// `false`, wenn abgebrochen wurde oder das Sichern fehlschlug.
     @discardableResult
-    func saveProject() -> Bool {
+    func saveProject(choosingLocation: Bool = false) -> Bool {
         guard !isReadOnly else { return false }
-        let url: URL
-        if let fileURL {
-            url = fileURL
-        } else {
-            let panel = NSSavePanel()
-            panel.allowedContentTypes = [Self.projectType]
-            panel.directoryURL = settingsProvider().saveDirectory
-            panel.canCreateDirectories = true
-            panel.nameFieldStringValue = Self.baseName(ImageExporter.fileName(date: createdAt, format: .png))
-            guard panel.runModal() == .OK, let chosen = panel.url else { return false }
-            url = chosen
+        var target = choosingLocation ? nil : fileURL
+        while true {
+            guard let url = target ?? chooseProjectLocation() else { return false }
+            do {
+                try writeProject(to: url)
+                fileURL = url
+                isDirty = false
+                return true
+            } catch {
+                Self.present(error)
+                target = nil
+            }
         }
+    }
+
+    private func writeProject(to url: URL) throws {
         var usesImage = false
         if case .image = model.style.background { usesImage = true }
-        do {
-            try ScreenXPackage.write(
-                model: model, original: original, backgroundData: usesImage ? backgroundData : nil,
-                backgroundExtension: backgroundExtension, to: url)
-            fileURL = url
-            isDirty = false
-            return true
-        } catch {
-            Self.present(error)
-            return false
+        try ScreenXPackage.write(
+            model: model, original: original, backgroundData: usesImage ? backgroundData : nil,
+            backgroundExtension: backgroundExtension, to: url)
+    }
+
+    /// Sichern-Dialog für das Projekt; `nil` bei Abbruch.
+    private func chooseProjectLocation() -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [Self.projectType]
+        panel.directoryURL = settingsProvider().saveDirectory
+        panel.canCreateDirectories = true
+        if let fileURL {
+            panel.nameFieldStringValue = fileURL.deletingPathExtension().lastPathComponent
+        } else {
+            panel.nameFieldStringValue = Self.baseName(ImageExporter.fileName(date: createdAt, format: .png))
         }
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
     func openProject() {

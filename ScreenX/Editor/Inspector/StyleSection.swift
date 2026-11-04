@@ -61,13 +61,8 @@ struct StyleSection: View {
             .padding(.top, 8)
         }
 
-        if vm.model.original.mode == .window {
-            Toggle(String(localized: "Fensterschatten behalten"), isOn: Binding(
-                get: { vm.model.style.keepWindowShadow },
-                set: { value in
-                    vm.applyStyle(String(localized: "Fensterschatten")) { $0.style.keepWindowShadow = value }
-                }))
-        }
+        // „Fensterschatten behalten“ ist in M2 ausgeblendet: Der Renderer kann den Systemschatten
+        // noch nicht entfernen. Ob er im Bild ist, entscheidet die Einstellung „Fensterschatten aufnehmen“.
     }
 
     private var isShadowAutomatic: Bool {
