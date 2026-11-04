@@ -56,6 +56,8 @@ final class EditorViewModel {
     @ObservationIgnored var dragFolder: URL?
 
     @ObservationIgnored private var continuousStart: Snapshot?
+    /// Name eines offenen, zeitgesteuerten Schritts (z. B. aus dem Farbfenster), sonst `nil`.
+    @ObservationIgnored private var pendingEditName: String?
     @ObservationIgnored private var previewMaxPixelSize: CGSize?
     @ObservationIgnored private var renderTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
@@ -118,6 +120,7 @@ final class EditorViewModel {
 
     func apply(_ actionName: String, _ change: (inout DocumentModel) -> Void) {
         guard !isReadOnly else { return }
+        flushPendingEdit()
         let before = snapshot
         var updated = model
         change(&updated)
@@ -127,9 +130,32 @@ final class EditorViewModel {
     }
 
     func beginContinuousChange() {
-        guard !isReadOnly, continuousStart == nil else { return }
+        guard !isReadOnly else { return }
+        flushPendingEdit()
+        guard continuousStart == nil else { return }
         continuousStart = snapshot
     }
+
+    /// Beginnt bzw. setzt einen Schritt fort, der kein Ende-Ereignis hat (Farbfenster).
+    /// Er endet mit `flushPendingEdit()`: zeitgesteuert, vor jeder anderen Änderung und vor Undo/Redo.
+    func beginPendingEdit(_ actionName: String) {
+        guard !isReadOnly else { return }
+        if pendingEditName == nil {
+            flushPendingEdit()
+            guard continuousStart == nil else { return }
+            continuousStart = snapshot
+        }
+        pendingEditName = actionName
+        refreshUndoState()
+    }
+
+    /// Schließt einen offenen Schritt aus `beginPendingEdit` als einen Undo-Schritt ab.
+    func flushPendingEdit() {
+        guard let name = pendingEditName else { return }
+        endContinuousChange(name)
+    }
+
+    var hasPendingEdit: Bool { pendingEditName != nil }
 
     /// Ändert das Modell während eines Reglerzugs, ohne Undo-Schritt.
     func applyLive(_ change: (inout DocumentModel) -> Void) {
@@ -146,6 +172,8 @@ final class EditorViewModel {
     func endContinuousChange(_ actionName: String) {
         guard let start = continuousStart else { return }
         continuousStart = nil
+        pendingEditName = nil
+        defer { refreshUndoState() }
         guard start.model != model else { return }
         registerUndo(restoring: start, actionName)
     }
@@ -155,6 +183,7 @@ final class EditorViewModel {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { throw EditorError.unreadableImage }
+        flushPendingEdit()
         let before = snapshot
         let ext = ext.lowercased()
         backgroundImage = image
@@ -164,11 +193,18 @@ final class EditorViewModel {
         commit(from: before, String(localized: "Hintergrundbild"))
     }
 
-    func undo() { undoManager?.undo() }
-    func redo() { undoManager?.redo() }
+    func undo() {
+        flushPendingEdit()
+        undoManager?.undo()
+    }
+
+    func redo() {
+        flushPendingEdit()
+        undoManager?.redo()
+    }
 
     func refreshUndoState() {
-        canUndo = undoManager?.canUndo ?? false
+        canUndo = (undoManager?.canUndo ?? false) || pendingEditName != nil
         canRedo = undoManager?.canRedo ?? false
     }
 

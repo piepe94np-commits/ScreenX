@@ -156,8 +156,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     @objc func saveProject(_ sender: Any?) { viewModel.saveProject() }
     @objc func exportImageAs(_ sender: Any?) { viewModel.exportAs(settings: viewModel.settingsProvider()) }
     @objc func copy(_ sender: Any?) { viewModel.copy() }
-    @objc func undo(_ sender: Any?) { undoStack.undo() }
-    @objc func redo(_ sender: Any?) { undoStack.redo() }
+    @objc func undo(_ sender: Any?) { viewModel.undo() }
+    @objc func redo(_ sender: Any?) { viewModel.redo() }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
@@ -165,7 +165,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
             return !viewModel.isReadOnly
         case #selector(undo(_:)):
             menuItem.title = undoStack.undoMenuItemTitle
-            return undoStack.canUndo
+            return undoStack.canUndo || viewModel.hasPendingEdit
         case #selector(redo(_:)):
             menuItem.title = undoStack.redoMenuItemTitle
             return undoStack.canRedo

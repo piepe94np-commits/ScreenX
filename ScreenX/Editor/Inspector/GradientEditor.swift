@@ -80,31 +80,30 @@ struct GradientEditor: View {
 }
 
 /// Fasst die vielen Änderungen aus dem Farbfenster zu einem Undo-Schritt zusammen:
-/// der Schritt endet 0,5 s nach der letzten Änderung.
+/// der Schritt endet 0,5 s nach der letzten Änderung oder früher, wenn das ViewModel ihn
+/// vor einer anderen Änderung bzw. vor Undo/Redo abschließt.
 @MainActor
 final class ColorEditSession {
     private var endTask: Task<Void, Never>?
-    private var actionName = ""
 
     func change(_ vm: EditorViewModel, _ actionName: String, _ edit: (inout DocumentModel) -> Void) {
-        self.actionName = actionName
-        vm.beginContinuousChange()
+        vm.beginPendingEdit(actionName)
         vm.applyLive(edit)
         endTask?.cancel()
         endTask = Task { [weak self, weak vm] in
             try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let vm else { return }
             self?.endTask = nil
-            vm?.endStyleChange(actionName)
+            vm.flushPendingEdit()
+            vm.rememberStyle()
         }
     }
 
     /// Schließt einen offenen Schritt sofort ab (z. B. vor einer anderen Änderung).
     func finish(_ vm: EditorViewModel) {
-        guard endTask != nil else { return }
         endTask?.cancel()
         endTask = nil
-        vm.endStyleChange(actionName)
+        vm.flushPendingEdit()
     }
 }
 

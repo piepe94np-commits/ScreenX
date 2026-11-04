@@ -59,6 +59,7 @@ struct InspectorGroup<Content: View>: View {
 
 /// Reglerzeile: Bezeichnung (78 pt), Regler und Zahlenfeld (34 pt, rechtsbündig).
 /// Ein Reglerzug ergibt genau einen Undo-Schritt; eine Eingabe im Zahlenfeld ebenso.
+/// Werte sind ganzzahlig (Schrittweite 1), wie im Zahlenfeld.
 struct StyleSlider: View {
     let vm: EditorViewModel
     let title: String
@@ -68,13 +69,15 @@ struct StyleSlider: View {
     let set: @Sendable (inout DocumentModel, Double) -> Void
 
     @State private var isEditing = false
+    /// Erzwingt die Neuanzeige des Zahlenfelds, wenn eine Eingabe auf den Bereich begrenzt wurde.
+    @State private var fieldRevision = 0
 
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
                 .lineLimit(1)
                 .frame(width: 78, alignment: .leading)
-            Slider(value: sliderValue, in: range) { editing in
+            Slider(value: sliderValue, in: range, step: 1) { editing in
                 isEditing = editing
                 if editing {
                     vm.beginContinuousChange()
@@ -87,6 +90,7 @@ struct StyleSlider: View {
                 .multilineTextAlignment(.trailing)
                 .monospacedDigit()
                 .frame(width: 34)
+                .id(fieldRevision)
         }
     }
 
@@ -108,6 +112,9 @@ struct StyleSlider: View {
             get: { Int(get(vm.model).rounded()) },
             set: { value in
                 let clamped = min(max(Double(value), range.lowerBound), range.upperBound)
+                if clamped != Double(value) { fieldRevision += 1 }
+                // Unverändert: kein Undo-Schritt (und abgeleitete Schattenwerte bleiben automatisch).
+                guard Int(clamped) != Int(get(vm.model).rounded()) else { return }
                 vm.applyStyle(actionName) { set(&$0, clamped) }
             })
     }

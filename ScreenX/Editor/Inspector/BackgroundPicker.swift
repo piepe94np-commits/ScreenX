@@ -158,9 +158,9 @@ struct BackgroundPicker: View {
             Button(String(localized: "Bild wählen …"), action: chooseImage)
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first else { return false }
-            loadImage(url)
-            return true
+            // Nur lokale Dateien; nichts aus dem Netz auf dem Main Actor laden.
+            guard let url = urls.first, url.isFileURL else { return false }
+            return loadImage(url)
         }
     }
 
@@ -173,7 +173,9 @@ struct BackgroundPicker: View {
         loadImage(url)
     }
 
-    private func loadImage(_ url: URL) {
+    /// Lädt das Bild als Hintergrund; `false` (mit Hinweisfenster), wenn es nicht geht.
+    @discardableResult
+    private func loadImage(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
         do {
             guard Self.imageExtensions.contains(ext) else { throw EditorError.unreadableImage }
@@ -181,8 +183,10 @@ struct BackgroundPicker: View {
             colorEdit.finish(vm)
             try vm.setBackgroundImage(data: data, ext: ext)
             vm.rememberStyle()
+            return true
         } catch {
             EditorViewModel.present(error)
+            return false
         }
     }
 }
