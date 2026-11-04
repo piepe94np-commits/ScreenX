@@ -17,9 +17,11 @@ public enum TemplateGeometry {
         }
         switch fit {
         case .fill:
-            let scale = max(screenSize.width / contentSize.width, screenSize.height / contentSize.height)
-            let w = min(contentSize.width, screenSize.width / scale)
-            let h = min(contentSize.height, screenSize.height / scale)
+            // The axis the content is wider in is cropped; the other keeps its exact length.
+            let screenAspect = screenSize.width / screenSize.height
+            let contentIsWider = contentSize.width / contentSize.height > screenAspect
+            let w = contentIsWider ? contentSize.height * screenAspect : contentSize.width
+            let h = contentIsWider ? contentSize.height : contentSize.width / screenAspect
             let freeX = contentSize.width - w, freeY = contentSize.height - h
             let ox = min(max(offset.x, -1), 1), oy = min(max(offset.y, -1), 1)
             let source = CGRect(x: freeX / 2 * (1 + ox), y: freeY / 2 * (1 + oy), width: w, height: h)
