@@ -14,6 +14,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     let viewModel: EditorViewModel
     private let undoStack = UndoManager()
     private var undoObservers: [any NSObjectProtocol] = []
+    private var keyMonitor: Any?
 
     /// Einstellungen für Fenster, die ohne eigene geöffnet werden (z. B. über „Öffnen …“);
     /// der `AppCoordinator` setzt hier seine Einstellungen.
@@ -71,6 +72,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         viewModel.undoManager = undoStack
         observeUndo()
         observeViewModel()
+        installToolKeys()
     }
 
     @available(*, unavailable)
@@ -89,6 +91,26 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeViewModel() }
         }
+    }
+
+    /// Buchstaben ohne Modifier wählen das Werkzeug, solange in diesem Fenster kein Text bearbeitet wird
+    /// und kein Blatt offen ist.
+    private func installToolKeys() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            (self?.handleToolKey(event) ?? false) ? nil : event
+        }
+    }
+
+    private func handleToolKey(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window, window.attachedSheet == nil,
+              !(window.firstResponder is NSText),
+              event.modifierFlags.intersection([.command, .control, .option, .shift, .function]).isEmpty,
+              let characters = event.charactersIgnoringModifiers, characters.count == 1,
+              let character = characters.first, let tool = EditorTool(key: character)
+        else { return false }
+        guard !viewModel.isReadOnly || tool == .select else { return false }
+        viewModel.tool = tool
+        return true
     }
 
     private func observeUndo() {
@@ -137,6 +159,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         viewModel.tearDown()
         for observer in undoObservers { NotificationCenter.default.removeObserver(observer) }
         undoObservers = []
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
         undoStack.removeAllActions()
         Self.controllers.remove(self)
         if Self.controllers.isEmpty {

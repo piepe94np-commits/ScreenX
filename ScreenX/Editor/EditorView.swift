@@ -11,6 +11,7 @@ struct EditorView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
+                ToolOptionsBar(vm: vm)
                 if vm.isReadOnly { readOnlyBanner }
                 CanvasView(vm: vm)
             }

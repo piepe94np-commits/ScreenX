@@ -44,6 +44,11 @@ final class EditorViewModel {
     private(set) var canRedo = false
     /// Kurze Rückmeldung wie „Kopiert“, verschwindet nach kurzer Zeit.
     private(set) var notice: String?
+    /// Aktives Werkzeug dieses Fensters.
+    var tool: EditorTool = .select
+    /// IDs der ausgewählten Anmerkungen. Die Auswahl ist kein Teil des Dokuments und kein Undo-Schritt;
+    /// IDs, die es nach Undo/Redo nicht mehr gibt, fallen heraus.
+    var selection: Set<UUID> = []
 
     @ObservationIgnored var undoManager: UndoManager? {
         didSet { refreshUndoState() }
@@ -231,7 +236,94 @@ final class EditorViewModel {
         backgroundImage = state.backgroundImage
         backgroundData = state.backgroundData
         backgroundExtension = state.backgroundExtension
+        pruneSelection()
         commit(from: current, actionName)
+    }
+
+    // MARK: - Auswahl und Ebenen
+
+    /// Wählt `id` aus. Mit `extend` wird sie zur Auswahl hinzugefügt bzw. wieder entfernt;
+    /// `nil` hebt die Auswahl auf (mit `extend` bleibt sie unverändert).
+    func select(_ id: UUID?, extend: Bool) {
+        guard let id else {
+            if !extend { selection = [] }
+            return
+        }
+        if extend {
+            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+        } else {
+            selection = [id]
+        }
+    }
+
+    func deleteSelection() {
+        guard !selection.isEmpty, !isReadOnly else { return }
+        let ids = selection
+        apply(String(localized: "Löschen")) { $0.annotations.removeAll { ids.contains($0.id) } }
+        selection = []
+    }
+
+    /// Dupliziert die Auswahl um 20 px nach rechts unten versetzt, ganz oben; die Kopien werden ausgewählt.
+    func duplicateSelection() {
+        guard !selection.isEmpty, !isReadOnly else { return }
+        let copies = model.annotations.filter { selection.contains($0.id) }.map { annotation in
+            var copy = AnnotationGeometry.moved(annotation, by: CGVector(dx: 20, dy: 20))
+            copy.id = UUID()
+            return copy
+        }
+        apply(String(localized: "Duplizieren")) { $0.annotations.append(contentsOf: copies) }
+        selection = Set(copies.map(\.id))
+    }
+
+    /// Hebt jede ausgewählte Anmerkung um eine Ebene an (spätere Anmerkungen liegen oben).
+    func bringForward() {
+        let ids = selection
+        apply(String(localized: "Nach vorne")) { model in
+            var list = model.annotations
+            for index in stride(from: list.count - 2, through: 0, by: -1)
+            where ids.contains(list[index].id) && !ids.contains(list[index + 1].id) {
+                list.swapAt(index, index + 1)
+            }
+            model.annotations = list
+        }
+    }
+
+    /// Senkt jede ausgewählte Anmerkung um eine Ebene ab.
+    func sendBackward() {
+        let ids = selection
+        apply(String(localized: "Nach hinten")) { model in
+            var list = model.annotations
+            for index in stride(from: 1, to: list.count, by: 1)
+            where ids.contains(list[index].id) && !ids.contains(list[index - 1].id) {
+                list.swapAt(index, index - 1)
+            }
+            model.annotations = list
+        }
+    }
+
+    /// Ändert alle ausgewählten Anmerkungen in einem Undo-Schritt; `change` lässt unpassende Arten unverändert.
+    func applyToSelection(_ actionName: String, _ change: (inout Annotation) -> Void) {
+        let ids = selection
+        apply(actionName) { model in
+            for index in model.annotations.indices where ids.contains(model.annotations[index].id) {
+                change(&model.annotations[index])
+            }
+        }
+    }
+
+    /// Wie `applyToSelection`, aber ohne Undo-Schritt (Reglerzug, Farbfenster).
+    func applyLiveToSelection(_ change: (inout Annotation) -> Void) {
+        let ids = selection
+        applyLive { model in
+            for index in model.annotations.indices where ids.contains(model.annotations[index].id) {
+                change(&model.annotations[index])
+            }
+        }
+    }
+
+    private func pruneSelection() {
+        let existing = Set(model.annotations.map(\.id))
+        if !selection.isSubset(of: existing) { selection.formIntersection(existing) }
     }
 
     // MARK: - Rendern
