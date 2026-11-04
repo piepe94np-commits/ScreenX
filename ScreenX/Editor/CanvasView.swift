@@ -140,12 +140,20 @@ struct CanvasView: View {
         (Double(percent) / 100).formatted(.percent.precision(.fractionLength(0)))
     }
 
-    @MainActor private static let checkerTile: NSImage = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
-        NSColor.white.setFill()
-        rect.fill()
-        NSColor(white: 0.86, alpha: 1).setFill()
-        NSRect(x: 0, y: 0, width: 8, height: 8).fill()
-        NSRect(x: 8, y: 8, width: 8, height: 8).fill()
-        return true
-    }
+    /// 16×16-Kachel, vorab gezeichnet (kein Zeichen-Block, den AppKit später abseits des Main Actors aufruft).
+    @MainActor private static let checkerTile: NSImage = {
+        let size = 16
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return NSImage(size: NSSize(width: size, height: size)) }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        context.setFillColor(CGColor(gray: 0.86, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        context.fill(CGRect(x: 8, y: 8, width: 8, height: 8))
+        guard let tile = context.makeImage() else { return NSImage(size: NSSize(width: size, height: size)) }
+        return NSImage(cgImage: tile, size: NSSize(width: size, height: size))
+    }()
 }

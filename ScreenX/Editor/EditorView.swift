@@ -6,6 +6,7 @@ import SwiftUI
 /// Werkzeugleiste in der Titelleiste.
 struct EditorView: View {
     let vm: EditorViewModel
+    @Binding var settings: AppSettings
 
     var body: some View {
         HStack(spacing: 0) {
@@ -14,17 +15,12 @@ struct EditorView: View {
                 CanvasView(vm: vm)
             }
             Divider()
-            inspector
+            InspectorView(vm: vm, settings: $settings)
                 .frame(width: 300)
                 .frame(maxHeight: .infinity)
                 .background(Color.editorInspector)
         }
         .toolbar { EditorToolbar(vm: vm) }
-    }
-
-    /// Platzhalter; den Inhalt liefert der Inspektor (M2 Task 7).
-    private var inspector: some View {
-        Color.clear
     }
 
     private var readOnlyBanner: some View {

@@ -48,7 +48,8 @@ final class EditorViewModel {
     @ObservationIgnored var undoManager: UndoManager? {
         didSet { refreshUndoState() }
     }
-    @ObservationIgnored let settingsProvider: () -> AppSettings
+    /// Quelle der Einstellungen; das Editor-Fenster verbindet sie mit den Einstellungen des Inspektors.
+    @ObservationIgnored var settingsProvider: () -> AppSettings
     /// Zeitpunkt der Aufnahme bzw. des Öffnens, für vorgeschlagene Dateinamen.
     @ObservationIgnored let createdAt: Date
     /// Ordner der zuletzt herausgezogenen Datei; wird beim nächsten Ziehen und beim Schließen entfernt.

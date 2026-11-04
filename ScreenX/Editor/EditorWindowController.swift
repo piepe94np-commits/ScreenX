@@ -15,8 +15,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     private let undoStack = UndoManager()
     private var undoObservers: [any NSObjectProtocol] = []
 
-    static func open(_ vm: EditorViewModel) {
-        let controller = EditorWindowController(viewModel: vm)
+    /// Einstellungen für Fenster, die ohne eigene geöffnet werden (z. B. über „Öffnen …“);
+    /// der `AppCoordinator` setzt hier seine Einstellungen.
+    static var settingsSource: Binding<AppSettings>?
+    /// Ersatz ohne `settingsSource`: liest und sichert direkt über den `SettingsStore`.
+    private static let storedSettings = Bindable(StoredSettings()).value
+
+    /// `settings` steuert Inspektor, Export und Werkzeugleiste dieses Fensters.
+    static func open(_ vm: EditorViewModel, settings: Binding<AppSettings>? = nil) {
+        let source = settings ?? settingsSource ?? storedSettings
+        let controller = EditorWindowController(viewModel: vm, settings: source)
         controllers.insert(controller)
         NSApp.setActivationPolicy(.regular)
         EditorMenu.install()
@@ -34,9 +42,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         return true
     }
 
-    private init(viewModel: EditorViewModel) {
+    private init(viewModel: EditorViewModel, settings: Binding<AppSettings>) {
         self.viewModel = viewModel
-        let hosting = NSHostingController(rootView: EditorView(vm: viewModel))
+        viewModel.settingsProvider = { settings.wrappedValue }
+        let hosting = NSHostingController(rootView: EditorView(vm: viewModel, settings: settings))
         hosting.sizingOptions = []
         hosting.sceneBridgingOptions = [.toolbars]
         let window = NSWindow(
@@ -99,6 +108,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard viewModel.isDirty else { return true }
+        // Die Abfrage läuft schon (z. B. zweites ⌘W): kein zweites Blatt stapeln.
+        guard sender.attachedSheet == nil else { return false }
         let alert = NSAlert()
         alert.messageText = String(localized: "Änderungen sichern?")
         alert.informativeText = String(localized: "Ohne Sichern gehen die Änderungen verloren.")
@@ -161,6 +172,29 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         default:
             return true
         }
+    }
+}
+
+/// Einstellungen direkt aus dem `SettingsStore`, wenn kein `AppCoordinator` sie bereitstellt.
+/// Jede Änderung wird unter demselben Schlüssel („settings.v1“) gesichert.
+@MainActor
+@Observable
+private final class StoredSettings {
+    private let store: SettingsStore
+    private var stored: AppSettings
+
+    var value: AppSettings {
+        get { stored }
+        set {
+            guard newValue != stored else { return }
+            stored = newValue
+            store.save(newValue)
+        }
+    }
+
+    init(store: SettingsStore = SettingsStore(defaults: .standard)) {
+        self.store = store
+        stored = store.load()
     }
 }
 
