@@ -40,8 +40,8 @@ public enum AnnotationKind: Codable, Hashable, Sendable {
         let type = try c.decode(String.self, forKey: .type)
         switch type {
         case "arrow":
-            let control: CGPoint? = (c.contains(.control) && !(try c.decodeNil(forKey: .control)))
-                ? try point(.control) : nil
+            var control: CGPoint?
+            if c.contains(.control), try !c.decodeNil(forKey: .control) { control = try point(.control) }
             self = .arrow(start: try point(.start), end: try point(.end), control: control,
                           head: try c.decode(ArrowHead.self, forKey: .head))
         case "shape":
