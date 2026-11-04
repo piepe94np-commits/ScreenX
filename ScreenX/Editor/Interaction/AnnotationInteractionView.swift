@@ -34,7 +34,9 @@ final class AnnotationInteractionView: NSView {
     /// Treffer-Toleranz in Ansichtspunkten, unabhängig vom Zoom.
     private static let hitTolerance: CGFloat = 8
 
-    var vm: EditorViewModel
+    var vm: EditorViewModel {
+        didSet { if vm !== oldValue { connect() } }
+    }
     var mapping: CanvasMapping
     var viewScale: CGFloat
     private var operation: DragOperation?
@@ -45,6 +47,7 @@ final class AnnotationInteractionView: NSView {
         self.mapping = mapping
         self.viewScale = viewScale
         super.init(frame: .zero)
+        connect()
         addTrackingArea(NSTrackingArea(
             rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
             owner: self, userInfo: nil))
@@ -53,6 +56,18 @@ final class AnnotationInteractionView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Undo/Redo brechen einen laufenden Zug zuerst ab, damit er die Historie nicht verfälscht.
+    private func connect() {
+        vm.interruptInteraction = { [weak self] in self?.interrupt() }
+    }
+
+    private func interrupt() {
+        guard let operation else { return }
+        operation.cancel(vm: vm)
+        self.operation = nil
+        needsDisplay = true
     }
 
     override var isFlipped: Bool { true }
@@ -205,7 +220,7 @@ final class AnnotationInteractionView: NSView {
         guard let operation else { return }
         self.operation = nil
         let inView = viewPoint(event)
-        operation.finish(at: mapping.toOriginal(inView), vm: vm)
+        operation.finish(at: mapping.toOriginal(inView), inView: inView, vm: vm)
         needsDisplay = true
         refreshCursor(at: inView)
     }

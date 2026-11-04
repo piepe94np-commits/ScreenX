@@ -30,14 +30,12 @@ struct DragOperation {
     private(set) var currentInView: CGPoint
     /// Das Modell wurde live geändert (ein Schritt mit `beginContinuousChange` ist offen).
     private(set) var isLive = false
-    private let annotationsBefore: [Annotation]
 
     init(_ kind: Kind, at start: CGPoint, inView startInView: CGPoint, vm: EditorViewModel) {
         self.kind = kind
         self.start = start
         self.startInView = startInView
         currentInView = startInView
-        annotationsBefore = vm.model.annotations
         switch kind {
         case let .counter(annotation):
             vm.beginContinuousChange()
@@ -58,8 +56,10 @@ struct DragOperation {
                       width: abs(currentInView.x - startInView.x), height: abs(currentInView.y - startInView.y))
     }
 
-    private var dragDistance: CGFloat {
-        hypot(currentInView.x - startInView.x, currentInView.y - startInView.y)
+    private var dragDistance: CGFloat { distance(to: currentInView) }
+
+    private func distance(to inView: CGPoint) -> CGFloat {
+        hypot(inView.x - startInView.x, inView.y - startInView.y)
     }
 
     // MARK: - Ablauf
@@ -112,10 +112,18 @@ struct DragOperation {
 
     /// Loslassen: ein Undo-Schritt für den ganzen Zug. Neue Anmerkungen werden ausgewählt;
     /// neue Texte und Notizen (auch per Klick mit Standardrahmen) gehen in die Textbearbeitung.
-    func finish(at p: CGPoint, vm: EditorViewModel, settings: ToolSettings = .shared) {
+    /// Endet ein Zeichen- oder Verschiebezug wieder nahe am Start oder entsteht eine Form ohne Fläche,
+    /// wird er wie mit Esc verworfen.
+    func finish(at p: CGPoint, inView: CGPoint, vm: EditorViewModel, settings: ToolSettings = .shared) {
+        let backAtStart = distance(to: inView) < Self.minimumDrag
         switch kind {
         case let .draw(tool, id):
             if isLive {
+                let drawn = vm.model.annotations.first { $0.id == id }
+                if backAtStart || drawn.map(Self.isDegenerate) ?? true {
+                    cancel(vm: vm)
+                    return
+                }
                 vm.endContinuousChange(Self.addActionName(tool))
                 guard vm.model.annotations.contains(where: { $0.id == id }) else { return }
                 vm.select(id, extend: false)
@@ -127,13 +135,19 @@ struct DragOperation {
                 vm.editingTextID = id
             }
         case let .counter(annotation):
+            // Ein Klick setzt den Zähler genau auf den Klickpunkt.
+            if backAtStart { replace(annotation, vm: vm) }
             vm.endContinuousChange(Self.addActionName(.counter))
             if vm.model.annotations.contains(where: { $0.id == annotation.id }) {
                 vm.select(annotation.id, extend: false)
             }
         case .move:
+            if backAtStart { return cancel(vm: vm) }
             vm.endContinuousChange(String(localized: "Bewegen"))
-        case let .resize(handle, _):
+        case let .resize(handle, original):
+            if let resized = vm.model.annotations.first(where: { $0.id == original.id }), Self.isDegenerate(resized) {
+                return cancel(vm: vm)
+            }
             let isPoint = [Handle.start, .end, .control].contains(handle)
             vm.endContinuousChange(isPoint ? String(localized: "Punkt verschieben") : String(localized: "Größe ändern"))
         case .rotate:
@@ -150,10 +164,24 @@ struct DragOperation {
             vm.selection = base
         default:
             guard isLive else { return }
-            let before = annotationsBefore
-            vm.applyLive { $0.annotations = before }
-            // Unverändert gegenüber dem Beginn: registriert keinen Schritt.
-            vm.endContinuousChange("")
+            vm.cancelContinuousChange()
+        }
+    }
+
+    /// Ohne Fläche bzw. Länge (unter 1 px): Rechteckarten mit Breite oder Höhe 0, Pfeile und Linien ohne Länge.
+    /// Bei Text zählt nur die Breite, die Höhe wächst mit dem Inhalt.
+    static func isDegenerate(_ a: Annotation) -> Bool {
+        switch a.kind {
+        case let .arrow(start, end, _, _):
+            hypot(end.x - start.x, end.y - start.y) < 1
+        case let .shape(.line, rect, _):
+            hypot(rect.size.width, rect.size.height) < 1
+        case let .text(frame, _, _, _, _):
+            abs(frame.width) < 1
+        case let .shape(_, rect, _), let .note(rect, _, _), let .blur(rect, _, _), let .highlight(rect):
+            abs(rect.width) < 1 || abs(rect.height) < 1
+        case .counter:
+            false
         }
     }
 

@@ -64,6 +64,10 @@ final class EditorViewModel {
     @ObservationIgnored var dragFolder: URL?
 
     @ObservationIgnored private var continuousStart: Snapshot?
+    /// `isDirty` zu Beginn des offenen Schritts: bleibt das Modell unverändert, gilt er wieder.
+    @ObservationIgnored private var continuousStartDirty = false
+    /// Bricht einen laufenden Mauszug ab (gesetzt von der Interaktionsschicht), z. B. vor Undo/Redo.
+    @ObservationIgnored var interruptInteraction: (@MainActor () -> Void)?
     /// Name eines offenen, zeitgesteuerten Schritts (z. B. aus dem Farbfenster), sonst `nil`.
     @ObservationIgnored private var pendingEditName: String?
     @ObservationIgnored private var previewMaxPixelSize: CGSize?
@@ -152,6 +156,7 @@ final class EditorViewModel {
         flushPendingEdit()
         guard continuousStart == nil else { return }
         continuousStart = snapshot
+        continuousStartDirty = isDirty
     }
 
     /// Beginnt bzw. setzt einen Schritt fort, der kein Ende-Ereignis hat (Farbfenster).
@@ -162,6 +167,7 @@ final class EditorViewModel {
             flushPendingEdit()
             guard continuousStart == nil else { return }
             continuousStart = snapshot
+            continuousStartDirty = isDirty
         }
         pendingEditName = actionName
         refreshUndoState()
@@ -187,14 +193,35 @@ final class EditorViewModel {
     }
 
     /// Registriert genau einen Undo-Schritt für den ganzen Reglerzug (falls sich etwas geändert hat).
+    /// Ist das Modell am Ende wieder wie am Anfang, gilt auch der Änderungszustand von damals.
     func endContinuousChange(_ actionName: String) {
         guard let start = continuousStart else { return }
         continuousStart = nil
         pendingEditName = nil
         defer { refreshUndoState() }
-        guard start.model != model else { return }
+        guard start.model != model else {
+            isDirty = continuousStartDirty
+            return
+        }
         registerUndo(restoring: start, actionName)
     }
+
+    /// Verwirft einen offenen Schritt: Modell und Änderungszustand wie zu Beginn, kein Undo-Schritt.
+    func cancelContinuousChange() {
+        guard let start = continuousStart else { return }
+        continuousStart = nil
+        pendingEditName = nil
+        if model != start.model {
+            model = start.model
+            pruneSelection()
+            scheduleRender()
+        }
+        isDirty = continuousStartDirty
+        refreshUndoState()
+    }
+
+    /// Ein Zug oder Reglerzug läuft (ohne die zeitgesteuerten Schritte des Farbfensters).
+    var isChangingContinuously: Bool { continuousStart != nil && pendingEditName == nil }
 
     func setBackgroundImage(data: Data, ext: String) throws {
         guard !isReadOnly else { return }
@@ -211,13 +238,18 @@ final class EditorViewModel {
         commit(from: before, String(localized: "Hintergrundbild"))
     }
 
+    /// Bricht zuerst einen laufenden Zug ab; während eines Reglerzugs passiert nichts.
     func undo() {
+        interruptInteraction?()
         flushPendingEdit()
+        guard continuousStart == nil else { return }
         undoManager?.undo()
     }
 
     func redo() {
+        interruptInteraction?()
         flushPendingEdit()
+        guard continuousStart == nil else { return }
         undoManager?.redo()
     }
 

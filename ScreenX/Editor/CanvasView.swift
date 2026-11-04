@@ -143,13 +143,20 @@ struct CanvasView: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
             .overlay {
                 ThumbnailDragView(
-                    image: NSImage(cgImage: preview, size: NSSize(width: side, height: side)),
+                    image: NSImage(cgImage: preview, size: Self.fitted(preview, side: side)),
                     makeFile: { try vm.makeDragFile() },
                     onClick: nil,
                     onDragEnded: { _ in })
             }
             .help("Ziehen, um das Bild als Datei abzulegen")
             .accessibilityLabel(String(localized: "Bild herausziehen"))
+    }
+
+    /// Größe für das Zieh-Vorschaubild: in `side` × `side` eingepasst, Seitenverhältnis bleibt.
+    private static func fitted(_ image: CGImage, side: CGFloat) -> NSSize {
+        let width = CGFloat(max(image.width, 1)), height = CGFloat(max(image.height, 1))
+        let scale = side / max(width, height)
+        return NSSize(width: max(1, width * scale), height: max(1, height * scale))
     }
 
     private var sizeText: String {
