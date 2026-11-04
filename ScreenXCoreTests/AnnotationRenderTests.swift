@@ -154,6 +154,13 @@ struct AnnotationRenderTests {
         let p = Self.pixel(image, at: 100, 50)
         #expect(p.r > 240 && p.b < 200 && p.b + 40 < p.g, "\(p)")
         #expect(!p.isWhite, "\(p)")
+        // Over blue, multiply keeps red and green at 0: ≈ (0, 0, 153). Normal blending gives ≈ (102, 82, 153).
+        let blueOriginal = Self.original { ctx in
+            ctx.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 100))
+        }
+        let overBlue = Self.pixel(try Self.render([highlight], original: blueOriginal), at: 100, 50)
+        #expect(overBlue.isClose(to: RGBA(r: 0, g: 0, b: 153, a: 255), tolerance: 6), "\(overBlue)")
     }
 
     @Test func highlightClippedToImage() throws {
@@ -182,6 +189,44 @@ struct AnnotationRenderTests {
                                   crop: crop, style: Self.plainStyle, annotations: [outside])
         let decoded = try JSONDecoder().decode(DocumentModel.self, from: JSONEncoder().encode(model))
         #expect(decoded.annotations == [outside])
+    }
+
+    @Test func annotationsInCroppedAwayAreaSkipped() throws {
+        var style = Self.plainStyle
+        style.padding = 64
+        let crop = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let outside = Self.shape(CGRect(x: 150, y: 10, width: 20, height: 20), filled: true)
+        let overlapping = Self.shape(CGRect(x: 90, y: 60, width: 20, height: 20), filled: true)
+        let image = try #require(Renderer.render(RenderInput(original: Self.original(), crop: crop, style: style,
+                                                             annotations: [outside, overlapping])))
+        #expect(image.width == 228)
+        let bitmap = Bitmap(image)
+        // `outside` would land at canvas x 214..<234, y 74..<94 (padding): it is skipped.
+        for y in stride(from: 70, to: 100, by: 2) {
+            for x in stride(from: 166, to: 228, by: 2) {
+                #expect(bitmap[x, y].isWhite, "(\(x), \(y)): \(bitmap[x, y])")
+            }
+        }
+        // `overlapping` meets the crop and draws unclipped into the padding (canvas x 154..<174).
+        #expect(bitmap[158, 134].isClose(to: Self.bluePixel))
+        #expect(bitmap[170, 134].isClose(to: Self.bluePixel))
+    }
+
+    @Test func curvedArrowControlNearEnd() throws {
+        // Control 5 px from the end: the head follows the curve's tangent where the shaft meets it.
+        let arrow = Annotation(kind: .arrow(start: CGPoint(x: 20, y: 50), end: CGPoint(x: 180, y: 50),
+                                            control: CGPoint(x: 177, y: 46), head: .filled),
+                               color: Self.red, strokeWidth: 6)
+        let bitmap = Bitmap(try Self.render([arrow]))
+        for x in [170, 174] {
+            #expect(bitmap[x, 50].isClose(to: Self.redPixel, tolerance: 30), "(\(x), 50): \(bitmap[x, 50])")
+        }
+        // Nothing beyond the tip.
+        for y in 20..<80 {
+            for x in 182..<200 {
+                #expect(bitmap[x, y].isWhite, "(\(x), \(y)): \(bitmap[x, y])")
+            }
+        }
     }
 
     @Test func annotationsFollowCrop() throws {
