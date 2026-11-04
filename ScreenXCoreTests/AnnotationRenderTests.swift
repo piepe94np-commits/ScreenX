@@ -229,7 +229,16 @@ struct AnnotationRenderTests {
     }
 
     @Test func writesAnnotationSnapshots() throws {
-        let original = TestImages.gradient(width: 800, height: 500)
+        // Gradient with black and white stripes under the blur and pixelate rects, so both are visible.
+        let ctx = Self.makeContext(width: 800, height: 500)
+        ctx.draw(TestImages.gradient(width: 800, height: 500), in: CGRect(x: 0, y: 0, width: 800, height: 500))
+        for (i, x) in stride(from: 540, to: 780, by: 10).enumerated() {
+            ctx.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+            ctx.fill(CGRect(x: x, y: 180, width: 5, height: 300))
+            ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: x + 5, y: 180 + (i % 2) * 20, width: 5, height: 280))
+        }
+        let original = try #require(ctx.makeImage())
         let annotations: [Annotation] = [
             Annotation(kind: .highlight(rect: CGRect(x: 40, y: 380, width: 300, height: 40)),
                        color: ColorValue(hex: "#FFCC00")!),
@@ -260,16 +269,16 @@ struct AnnotationRenderTests {
                                    string: "Beschriftung mit Box", fontSize: 24, bold: true,
                                    background: ColorValue(hex: "#1D1D1F")!),
                        color: ColorValue(hex: "#FFFFFF")!),
-            Annotation(kind: .text(frame: CGRect(x: 600, y: 420, width: 260, height: 30),
-                                   string: "Text ragt über den Rand hinaus", fontSize: 22, bold: false,
-                                   background: nil)),
-            Annotation(kind: .note(frame: CGRect(x: 560, y: 320, width: 200, height: 90),
+            Annotation(kind: .note(frame: CGRect(x: 520, y: 330, width: 260, height: 150),
                                    string: "Notiz:\nmehrzeilig und umbrochen",
                                    noteColor: AnnotationPalette.noteColors[0])),
             Annotation(kind: .counter(center: CGPoint(x: 30, y: 30), number: 1, radius: 18)),
             Annotation(kind: .counter(center: CGPoint(x: 520, y: 30), number: 2, radius: 18)),
-            Annotation(kind: .counter(center: CGPoint(x: 790, y: 490), number: 12, radius: 18),
+            Annotation(kind: .counter(center: CGPoint(x: 790, y: 12), number: 12, radius: 18),
                        color: ColorValue(hex: "#0A84FF")!),
+            Annotation(kind: .text(frame: CGRect(x: 640, y: 485, width: 220, height: 30),
+                                   string: "Ragt über den Rand", fontSize: 22, bold: false, background: nil),
+                       color: ColorValue(hex: "#FFFFFF")!),
         ]
         var style = Style.default
         style.cornerRadius = 16
