@@ -1,6 +1,7 @@
 {
   "sourceLanguage" : "de",
   "strings" : {
+    "Diese Datei wurde mit einer neueren ScreenX-Version erstellt und kann nicht geöffnet werden." : {},
     "document.json fehlt" : {},
     "Kein Paket" : {},
     "Die Datei ist beschädigt: %@" : {},

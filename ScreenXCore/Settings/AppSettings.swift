@@ -54,12 +54,19 @@ public struct AppSettings: Codable, Sendable, Equatable {
             ?? FileManager.default.homeDirectoryForCurrentUser
         let d = Self.defaults(home: home)
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        hotkeys = (try? c.decodeIfPresent([CaptureMode: KeyCombo].self, forKey: .hotkeys)) ?? d.hotkeys
+        if let raw = try? c.decodeIfPresent([String: KeyCombo].self, forKey: .hotkeys) {
+            // Unknown modes (e.g. from a future version) are ignored instead of resetting everything.
+            hotkeys = Dictionary(uniqueKeysWithValues: raw.compactMap { key, combo in
+                CaptureMode(rawValue: key).map { ($0, combo) }
+            })
+        } else {
+            hotkeys = d.hotkeys
+        }
         afterCapture = (try? c.decodeIfPresent(AfterCaptureAction.self, forKey: .afterCapture)) ?? d.afterCapture
-        quickAccessDuration = (try? c.decodeIfPresent(TimeInterval.self, forKey: .quickAccessDuration)) ?? d.quickAccessDuration
+        quickAccessDuration = min(30, max(3, (try? c.decodeIfPresent(TimeInterval.self, forKey: .quickAccessDuration)) ?? d.quickAccessDuration))
         saveDirectory = (try? c.decodeIfPresent(URL.self, forKey: .saveDirectory)) ?? d.saveDirectory
         exportFormat = (try? c.decodeIfPresent(ExportFormat.self, forKey: .exportFormat)) ?? d.exportFormat
-        jpegQuality = (try? c.decodeIfPresent(Double.self, forKey: .jpegQuality)) ?? d.jpegQuality
+        jpegQuality = min(1, max(0, (try? c.decodeIfPresent(Double.self, forKey: .jpegQuality)) ?? d.jpegQuality))
         windowShadow = (try? c.decodeIfPresent(Bool.self, forKey: .windowShadow)) ?? d.windowShadow
         exportScale = (try? c.decodeIfPresent(ExportScale.self, forKey: .exportScale)) ?? d.exportScale
         applyLastStyle = (try? c.decodeIfPresent(Bool.self, forKey: .applyLastStyle)) ?? d.applyLastStyle

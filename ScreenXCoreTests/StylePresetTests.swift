@@ -54,4 +54,20 @@ struct StylePresetTests {
         #expect(store.presets().isEmpty)
         #expect(store.lastStyle() == nil)
     }
+
+    @Test func badPresetDoesNotWipeOthers() throws {
+        let (defaults, cleanup) = suite()
+        defer { cleanup() }
+        let good = StylePreset(name: "Gut", style: .default)
+        let goodJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(good))
+        let raw = try JSONSerialization.data(withJSONObject: [goodJSON, ["garbage": true]])
+        defaults.set(raw, forKey: "stylePresets.v1")
+        let store = StylePresetStore(defaults: defaults)
+        #expect(store.presets() == [good])
+
+        let added = StylePreset(name: "Neu", style: .default)
+        store.save(added)
+        #expect(store.presets() == [good, added])
+        #expect(defaults.data(forKey: "stylePresets.v1.backup") == raw)
+    }
 }

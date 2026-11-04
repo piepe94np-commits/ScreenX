@@ -96,4 +96,18 @@ struct SettingsTests {
         SettingsStore(defaults: suite, home: home).save(settings)
         #expect(SettingsStore(defaults: suite, home: home).load() == settings)
     }
+
+    @Test func unknownHotkeyModeIgnored() throws {
+        let json = #"{"hotkeys":{"area":{"keyCode":21,"modifiers":6},"scrolling":{"keyCode":1,"modifiers":6}}}"#
+        let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+        #expect(s.hotkeys.count == 1)
+        #expect(s.hotkeys[.area] == KeyCombo(keyCode: 21, modifiers: [.option, .shift]))
+    }
+
+    @Test func outOfRangeValuesAreClamped() throws {
+        let json = #"{"quickAccessDuration":500,"jpegQuality":7}"#
+        let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+        #expect(s.quickAccessDuration == 30)
+        #expect(s.jpegQuality == 1)
+    }
 }

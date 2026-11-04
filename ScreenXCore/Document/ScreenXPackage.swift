@@ -23,6 +23,7 @@ public struct LoadedDocument: Sendable {
 public enum PackageError: Error, LocalizedError, Equatable {
     case corrupt(String)
     case missingOriginal
+    case newerVersion(Int)
 
     public var errorDescription: String? {
         switch self {
@@ -30,6 +31,8 @@ public enum PackageError: Error, LocalizedError, Equatable {
             String(localized: "Die Datei ist beschädigt: \(detail)")
         case .missingOriginal:
             String(localized: "Das Originalbild fehlt in der Datei.")
+        case .newerVersion:
+            String(localized: "Diese Datei wurde mit einer neueren ScreenX-Version erstellt und kann nicht geöffnet werden.")
         }
     }
 }
@@ -92,7 +95,11 @@ public enum ScreenXPackage {
         do {
             model = try JSONDecoder().decode(DocumentModel.self, from: jsonData)
         } catch {
-            throw PackageError.corrupt(String(describing: error))
+            if let peek = try? JSONDecoder().decode(VersionPeek.self, from: jsonData),
+               peek.version > DocumentModel.currentVersion {
+                throw PackageError.newerVersion(peek.version)
+            }
+            throw PackageError.corrupt(describe(error))
         }
         guard let originalData = files[model.original.file]?.regularFileContents else {
             throw PackageError.missingOriginal
@@ -115,13 +122,8 @@ public enum ScreenXPackage {
     }
 
     public static func read(from url: URL) throws -> LoadedDocument {
-        let wrapper: FileWrapper
-        do {
-            wrapper = try FileWrapper(url: url, options: .immediate)
-        } catch {
-            throw PackageError.corrupt(error.localizedDescription)
-        }
-        return try read(wrapper)
+        // I/O errors (not found, permission) propagate unchanged; only format problems are `.corrupt`.
+        try read(FileWrapper(url: url, options: .immediate))
     }
 
     /// Writes atomically: builds a temporary package next to `url`, then swaps it in.
@@ -149,6 +151,21 @@ public enum ScreenXPackage {
             try? fileManager.removeItem(at: temp)
             throw error
         }
+    }
+
+    private struct VersionPeek: Decodable { let version: Int }
+
+    private static func describe(_ error: Error) -> String {
+        guard let decoding = error as? DecodingError else { return error.localizedDescription }
+        let context: DecodingError.Context
+        switch decoding {
+        case .typeMismatch(_, let c), .valueNotFound(_, let c), .keyNotFound(_, let c), .dataCorrupted(let c):
+            context = c
+        @unknown default:
+            return error.localizedDescription
+        }
+        let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+        return path.isEmpty ? context.debugDescription : "\(path): \(context.debugDescription)"
     }
 
     private static func decode(_ data: Data) -> CGImage? {

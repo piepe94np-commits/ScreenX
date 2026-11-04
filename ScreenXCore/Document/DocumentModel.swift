@@ -49,14 +49,14 @@ public struct DocumentModel: Codable, Hashable, Sendable {
         version = try c.decode(Int.self, forKey: .version)
         original = try c.decode(OriginalInfo.self, forKey: .original)
         style = try c.decode(Style.self, forKey: .style)
-        if try c.decodeNil(forKey: .crop) || !c.contains(.crop) {
-            crop = nil
-        } else {
+        if c.contains(.crop), try !c.decodeNil(forKey: .crop) {
             let k = try c.nestedContainer(keyedBy: CropKeys.self, forKey: .crop)
             crop = CGRect(x: try k.decode(Double.self, forKey: .x),
                           y: try k.decode(Double.self, forKey: .y),
                           width: try k.decode(Double.self, forKey: .width),
                           height: try k.decode(Double.self, forKey: .height))
+        } else {
+            crop = nil
         }
         // `template` and `annotations` are ignored until later milestones use them.
     }

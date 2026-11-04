@@ -115,4 +115,32 @@ struct PackageTests {
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         #expect(leftovers == ["x.screenx"])
     }
+
+    @Test func decodesWithoutCropKey() throws {
+        let wrapper = try ScreenXPackage.fileWrapper(
+            model: model(), original: original(), backgroundData: nil, backgroundExtension: nil)
+        let json = try #require(wrapper.fileWrappers?["document.json"]?.regularFileContents)
+        var object = try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
+        object.removeValue(forKey: "crop")
+        let stripped = replacing(wrapper, name: "document.json", with: try JSONSerialization.data(withJSONObject: object))
+        let loaded = try ScreenXPackage.read(stripped)
+        #expect(loaded.model.crop == nil)
+    }
+
+    @Test func newerVersionUndecodableGivesNewerVersionError() throws {
+        let wrapper = try ScreenXPackage.fileWrapper(
+            model: model(), original: original(), backgroundData: nil, backgroundExtension: nil)
+        let broken = replacing(wrapper, name: "document.json", with: Data(#"{"version":99,"original":42}"#.utf8))
+        #expect(throws: PackageError.newerVersion(99)) { try ScreenXPackage.read(broken) }
+    }
+
+    @Test func missingFileRethrowsIOError() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("nope-\(UUID()).screenx")
+        do {
+            _ = try ScreenXPackage.read(from: url)
+            Issue.record("expected error")
+        } catch {
+            #expect(!(error is PackageError))
+        }
+    }
 }
