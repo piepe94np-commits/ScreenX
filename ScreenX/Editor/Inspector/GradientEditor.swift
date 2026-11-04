@@ -85,17 +85,25 @@ struct GradientEditor: View {
 @MainActor
 final class ColorEditSession {
     private var endTask: Task<Void, Never>?
+    /// Merkt am Ende eines Schritts den Stil als „zuletzt verwendet“ (Inspektor). Änderungen an
+    /// Anmerkungen ändern den Stil nicht und dürfen den gemerkten Stil nicht überschreiben.
+    private let remembersStyle: Bool
+
+    init(remembersStyle: Bool = true) {
+        self.remembersStyle = remembersStyle
+    }
 
     func change(_ vm: EditorViewModel, _ actionName: String, _ edit: (inout DocumentModel) -> Void) {
         vm.beginPendingEdit(actionName)
         vm.applyLive(edit)
         endTask?.cancel()
+        let remembersStyle = remembersStyle
         endTask = Task { [weak self, weak vm] in
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let vm else { return }
             self?.endTask = nil
             vm.flushPendingEdit()
-            vm.rememberStyle()
+            if remembersStyle { vm.rememberStyle() }
         }
     }
 

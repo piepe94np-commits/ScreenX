@@ -9,7 +9,7 @@ struct ToolOptionsBar: View {
     let vm: EditorViewModel
     private var settings: ToolSettings { .shared }
 
-    @State private var colorEdit = ColorEditSession()
+    @State private var colorEdit = ColorEditSession(remembersStyle: false)
 
     /// Optionsgruppen, in der Reihenfolge der Anzeige.
     private enum OptionGroup: CaseIterable { case color, stroke, arrow, shape, text, note, counter, blur }
@@ -118,8 +118,11 @@ struct ToolOptionsBar: View {
     }
 
     /// Regler: an der Auswahl ein Undo-Schritt je Zug, sonst direkt an den Werkzeug-Optionen.
+    /// `remember` merkt den Wert an einer Auswahl als „zuletzt genutzt“: einmal je Zug bzw. Schritt,
+    /// nicht bei jedem Zwischenwert.
     private func slider(_ title: String, actionName: String, range: ClosedRange<Double>, value: Double,
                         tool: @escaping (Double) -> Void,
+                        remember: @escaping (Double) -> Void = { _ in },
                         annotation: @escaping (inout Annotation, Double) -> Void) -> some View {
         OptionSlider(
             title: title, range: range, value: value,
@@ -131,12 +134,17 @@ struct ToolOptionsBar: View {
                     } else {
                         colorEdit.finish(vm)
                         vm.applyToSelection(actionName) { annotation(&$0, newValue) }
+                        remember(newValue)
                     }
                 } else {
                     tool(newValue)
                 }
             },
-            end: { if isSelection { vm.endContinuousChange(actionName) } })
+            end: { lastValue in
+                guard isSelection else { return }
+                vm.endContinuousChange(actionName)
+                if let lastValue { remember(lastValue) }
+            })
     }
 
     // MARK: - Farbe und Stärke
@@ -167,8 +175,8 @@ struct ToolOptionsBar: View {
         return slider(String(localized: "Stärke"), actionName: String(localized: "Strichstärke"),
                       range: 1...40, value: value,
                       tool: { settings.strokeWidth = $0 },
+                      remember: { settings.strokeWidth = $0 },
                       annotation: { a, width in
-                          settings.strokeWidth = width
                           if a.supportsStrokeWidth { a.strokeWidth = width }
                       })
     }
@@ -222,6 +230,10 @@ struct ToolOptionsBar: View {
         let shape = isSelection ? selected.lazy.compactMap(\.shapeAttributes).first : nil
         let kind = shape?.kind ?? settings.shapeKind
         let filled = shape?.filled ?? settings.shapeFilled
+        // Linien haben keine Füllung: gesperrt nur, wenn keine ausgewählte Form sie nutzen kann.
+        let onlyLines = isSelection
+            ? selected.compactMap(\.shapeAttributes).allSatisfy { $0.kind == .line }
+            : kind == .line
         return HStack(spacing: 8) {
             Picker(String(localized: "Formart"), selection: Binding(
                 get: { kind },
@@ -257,7 +269,7 @@ struct ToolOptionsBar: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .disabled(kind == .line)
+            .disabled(onlyLines)
         }
     }
 
@@ -409,17 +421,28 @@ private struct OptionSlider: View {
     let value: Double
     let begin: () -> Void
     let change: (Double, Bool) -> Void
-    let end: () -> Void
+    /// Meldet den letzten Wert des Zugs (`nil`, wenn er sich nicht geändert hat).
+    let end: (Double?) -> Void
 
     @State private var isEditing = false
+    @State private var lastValue: Double?
 
     var body: some View {
         HStack(spacing: 6) {
             Text(title)
                 .foregroundStyle(.secondary)
-            Slider(value: Binding(get: { value }, set: { change($0, isEditing) }), in: range, step: 1) { editing in
+            Slider(value: Binding(get: { value }, set: { newValue in
+                if isEditing { lastValue = newValue }
+                change(newValue, isEditing)
+            }), in: range, step: 1) { editing in
                 isEditing = editing
-                if editing { begin() } else { end() }
+                if editing {
+                    lastValue = nil
+                    begin()
+                } else {
+                    end(lastValue)
+                    lastValue = nil
+                }
             }
             .frame(width: 100)
             Text(value, format: .number.precision(.fractionLength(0)))
