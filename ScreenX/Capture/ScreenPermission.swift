@@ -1,3 +1,4 @@
+import Foundation
 import CoreGraphics
 
 /// Freigabe für Bildschirmaufnahme (TCC „Bildschirm- und Systemaudioaufnahme“).
