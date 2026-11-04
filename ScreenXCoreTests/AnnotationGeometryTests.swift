@@ -106,7 +106,7 @@ struct AnnotationGeometryTests {
             == CGRect(x: 0, y: 0, width: 80, height: 80))
         #expect(AnnotationGeometry.constrainedRect(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 70, y: 120),
                                                    proportional: true)
-            == CGRect(x: 70, y: 70, width: 30, height: 30))
+            == CGRect(x: 70, y: 100, width: 30, height: 30))
         #expect(AnnotationGeometry.constrainedRect(from: CGPoint(x: 10, y: 10), to: CGPoint(x: 0, y: 40),
                                                    proportional: false)
             == CGRect(x: 0, y: 10, width: 10, height: 30))
