@@ -113,6 +113,39 @@ struct RendererTests {
         // Without shadow the same pixel stays white.
         let plain = try #require(Renderer.render(RenderInput(original: Self.blueImage(), style: Self.style(white))))
         #expect(Self.pixel(plain, at: 64 + 100, 164 + 10).isClose(to: RGBA(r: 255, g: 255, b: 255, a: 255)))
+        // The shadow falls downwards: 10 px below the image is clearly darker than 10 px above it.
+        let above = Self.pixel(image, at: 64 + 100, 64 - 10)
+        #expect(p.r + 10 < above.r, "below \(p) vs above \(above)")
+    }
+
+    @Test func shadowScalesWithOutputScale() throws {
+        let white = Background.solid(ColorValue(hex: "#FFFFFF")!)
+        let input = RenderInput(original: Self.blueImage(), style: Self.style(white, shadow: 100))
+        let one = try #require(Renderer.render(input))
+        let two = try #require(Renderer.render(input, outputScale: 2))
+        for (x, y) in [(64 + 100, 164 + 10), (64 + 100, 164 + 30)] {
+            let a = Self.pixel(one, at: x, y)
+            let b = Self.pixel(two, at: 2 * x, 2 * y)
+            #expect(a.r < 250, "(\(x), \(y)) should be in the shadow: \(a)")
+            #expect(a.isClose(to: b, tolerance: 8), "(\(x), \(y)): 1x \(a) vs 2x \(b)")
+        }
+    }
+
+    @Test func transparentCornersStayClean() throws {
+        let ctx = Self.makeContext(width: 200, height: 100)
+        ctx.setFillColor(CGColor(srgbRed: 0x20 / 255, green: 0x50 / 255, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 100))
+        for corner in [CGRect(x: 0, y: 0, width: 10, height: 10), CGRect(x: 190, y: 0, width: 10, height: 10),
+                       CGRect(x: 0, y: 90, width: 10, height: 10), CGRect(x: 190, y: 90, width: 10, height: 10)] {
+            ctx.clear(corner)
+        }
+        let original = try #require(ctx.makeImage())
+        let white = Background.solid(ColorValue(hex: "#FFFFFF")!)
+        let image = try #require(Renderer.render(RenderInput(original: original,
+                                                             style: Self.style(white, radius: 0, shadow: 50))))
+        // Image-local (2, 2) lies in the transparent top-left corner.
+        let p = Self.pixel(image, at: 64 + 2, 64 + 2)
+        #expect(p.r > 230 && p.g > 230 && p.b > 230, "\(p)")
     }
 
     @Test func gradientDirection135() throws {

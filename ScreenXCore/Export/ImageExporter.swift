@@ -36,7 +36,7 @@ public enum ImageExporter {
         if format == .jpeg {
             properties[kCGImageDestinationLossyCompressionQuality] = jpegQuality
         }
-        let encoded = format == .jpeg ? try flattenedOnWhite(image) : image
+        let encoded = format == .jpeg && hasAlpha(image) ? try flattenedOnWhite(image) : image
         CGImageDestinationAddImage(destination, encoded, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
             throw ExportError.encodingFailed
@@ -74,9 +74,18 @@ public enum ImageExporter {
         }
     }
 
+    private static func hasAlpha(_ image: CGImage) -> Bool {
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: false
+        default: true
+        }
+    }
+
     /// JPEG has no alpha: composite onto opaque white so transparent areas don't turn black.
+    /// Keeps the image's color space when it is RGB, otherwise uses sRGB.
     private static func flattenedOnWhite(_ image: CGImage) throws -> CGImage {
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+        let rgbSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+        guard let space = rgbSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
               let ctx = CGContext(
                 data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
                 space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)

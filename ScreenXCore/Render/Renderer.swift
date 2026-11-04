@@ -59,23 +59,23 @@ public enum Renderer {
         let shape = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
         let shadow = style.shadow.resolved()
+        ctx.saveGState()
         if shadow.opacity > 0 {
-            ctx.saveGState()
             // Shadow offset and blur live in device space (y up, unscaled), unaffected by the CTM.
             ctx.setShadow(
                 offset: CGSize(width: 0, height: -CGFloat(shadow.offsetY) * outputScale),
                 blur: CGFloat(shadow.blur) * outputScale,
                 color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: min(1, shadow.opacity)))
-            ctx.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
-            ctx.addPath(shape)
-            ctx.fillPath()
-            ctx.restoreGState()
         }
-
+        // The shadow is cast by the clipped content itself (composited as one layer), so
+        // transparent areas of the screenshot (e.g. window corners) stay free of shadow.
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
         ctx.saveGState()
         ctx.addPath(shape)
         ctx.clip()
         ctx.drawUpright(content, in: rect)
+        ctx.restoreGState()
+        ctx.endTransparencyLayer()
         ctx.restoreGState()
 
         return ctx.makeImage()

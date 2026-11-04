@@ -4,6 +4,13 @@ import Foundation
 
 /// Paints a `Background` into a context flipped to a top-left origin, in original-pixel units.
 enum BackgroundPainter {
+    /// CIContext is documented as thread-safe; the box only makes that known to the compiler.
+    private struct CIContextBox: @unchecked Sendable {
+        let context: CIContext
+    }
+
+    private static let sharedCIContext = CIContextBox(context: CIContext(options: [.cacheIntermediates: false]))
+
     static func paint(_ background: Background, in ctx: CGContext, canvas: CGRect, original: CGImage,
                       backgroundImage: CGImage?, outputScale: CGFloat) {
         switch background {
@@ -76,8 +83,7 @@ enum BackgroundPainter {
         let blurred = radius > 0
             ? source.clampedToExtent().applyingGaussianBlur(sigma: radius * Double(outputScale)).cropped(to: extent)
             : source
-        let context = CIContext(options: [.cacheIntermediates: false])
-        return context.createCGImage(blurred, from: extent, format: .RGBA8,
+        return sharedCIContext.context.createCGImage(blurred, from: extent, format: .RGBA8,
                                      colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
     }
 }
