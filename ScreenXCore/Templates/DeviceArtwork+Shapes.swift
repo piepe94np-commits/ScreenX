@@ -128,7 +128,7 @@ extension DeviceArtwork {
         }
 
         let field = CGRect(x: window.midX - 460, y: barHeight / 2 - 27, width: 920, height: 54)
-        fill(roundedRect(field, top: 14, bottom: 14), color: (p.isDark ? RGB(0x2C2C2F) : RGB(0xE4E4E9)).cg(),
+        fill(roundedRect(field, top: 14, bottom: 14), color: (p.isDark ? RGB(0x38383B) : RGB(0xE4E4E9)).cg(),
              in: ctx)
         let textColor = p.isDark ? RGB(0xEBEBF5).cg(0.8) : RGB(0x3C3C43).cg(0.85)
         drawCenteredText(urlText, size: 26, color: textColor, center: CGPoint(x: field.midX, y: field.midY),
