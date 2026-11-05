@@ -233,6 +233,66 @@ struct DeviceRenderTests {
         #expect(at(53, 55).isClose(to: Self.white, tolerance: 20), "outside quad \(at(53, 55))")
     }
 
+    /// Task 6 contract: `Renderer.layout(for:)` plus `screenToContentTransform` locate content pixels on
+    /// the rendered canvas (crop, fill with offset, padding, output scale 2).
+    @Test func layoutMapsCanvasToContent() throws {
+        // 400×300 blue original with a red 10×10 marker at original (200, 140); crop at (50, 40) puts it at
+        // content (150, 100).
+        let ctx = Self.makeContext(width: 400, height: 300)
+        ctx.setFillColor(ColorValue(hex: "#2050FF")!.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        ctx.setFillColor(ColorValue(hex: "#FF0000")!.cgColor)
+        ctx.fill(CGRect(x: 200, y: 300 - 140 - 10, width: 10, height: 10)) // y-up context
+        let original = try #require(ctx.makeImage())
+        let placement = TemplatePlacement(templateID: Self.phone.id, fit: .fill, offset: CGPoint(x: -0.2, y: 0))
+        let input = RenderInput(original: original, crop: CGRect(x: 50, y: 40, width: 300, height: 200),
+                                style: Self.style(padding: 30), template: Self.phone, placement: placement)
+        let scale: CGFloat = 2
+        let image = try #require(Renderer.render(input, outputScale: scale))
+        let (canvas, device) = Renderer.layout(for: input)
+        let layout = try #require(device)
+        #expect(image.width == Int((canvas.canvasSize.width * scale).rounded()))
+        #expect(image.height == Int((canvas.canvasSize.height * scale).rounded()))
+        let toContent = try #require(TemplateGeometry.screenToContentTransform(
+            template: Self.phone, placement: placement, contentSize: CGSize(width: 300, height: 200),
+            frameScale: layout.frameScale))
+        let origin = canvas.imageRect.origin
+
+        func canvasPoint(content p: CGPoint) -> CGPoint {
+            let d = p.applying(toContent.inverted())
+            return CGPoint(x: (d.x + origin.x) * scale, y: (d.y + origin.y) * scale)
+        }
+        // Content → canvas: marker center is red, a point left of it is blue.
+        let marker = canvasPoint(content: CGPoint(x: 155, y: 105))
+        #expect(Self.pixel(image, at: marker).isClose(to: Self.red, tolerance: 8), "marker \(Self.pixel(image, at: marker))")
+        let beside = canvasPoint(content: CGPoint(x: 140, y: 105))
+        #expect(Self.pixel(image, at: beside).isClose(to: Self.blue, tolerance: 8), "beside \(Self.pixel(image, at: beside))")
+
+        // Canvas → content: the output pixel at the marker maps back into the marker square.
+        let px = CGPoint(x: marker.x.rounded(.down) + 0.5, y: marker.y.rounded(.down) + 0.5)
+        let back = CGPoint(x: px.x / scale - origin.x, y: px.y / scale - origin.y).applying(toContent)
+        #expect(CGRect(x: 150, y: 100, width: 10, height: 10).contains(back), "\(back)")
+    }
+
+    @Test func artworkCacheIsBoundedAndLRU() throws {
+        let cache = ArtworkCache()
+        let id = "laptop-silver"
+        let small = try #require(cache.image(id: id, scale: 0.5, urlText: nil))
+        // Scales rounding to the same 1/1000 share an entry.
+        #expect(try #require(cache.image(id: id, scale: 0.5004, urlText: nil)) === small)
+        // Above 8 MP (3000×1900 at 1.2 ≈ 8.2 MP) nothing is cached; compose draws the vectors directly.
+        #expect(cache.image(id: id, scale: 1.2, urlText: nil) == nil)
+        #expect(cache.usage.count == 1)
+
+        let first = try #require(cache.image(id: id, scale: 1.0, urlText: nil)) // ≈ 22.8 MB each
+        for s in [0.99, 0.98] { _ = cache.image(id: id, scale: s, urlText: nil) }
+        _ = cache.image(id: id, scale: 0.5, urlText: nil) // touch: most recently used
+        for s in [0.97, 0.96, 0.95] { _ = cache.image(id: id, scale: s, urlText: nil) }
+        #expect(cache.usage.bytes <= ArtworkCache.byteBudget, "\(cache.usage)")
+        #expect(try #require(cache.image(id: id, scale: 0.5, urlText: nil)) === small)
+        #expect(try #require(cache.image(id: id, scale: 1.0, urlText: nil)) !== first)
+    }
+
     @Test func writesMockupSnapshots() throws {
         let screenshot = Self.sampleScreenshot(width: 1440, height: 900)
         let tall = Self.sampleScreenshot(width: 590, height: 1278)

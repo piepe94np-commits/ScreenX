@@ -92,7 +92,7 @@ public enum DeviceCompositor {
             if let artwork = artworkCache.image(id: id, scale: scale, urlText: placement.urlText) {
                 ctx.drawUpright(artwork, in: full)
             } else {
-                // Too large for the cache image: draw the vectors directly.
+                // Not cached (too large for the cache or for an image): draw the vectors directly.
                 DeviceArtwork.draw(builtin: id, in: ctx, size: full.size, urlText: placement.urlText)
             }
         case .file:
@@ -142,8 +142,12 @@ public enum DeviceCompositor {
     /// in the same coordinates; the returned image covers exactly that rect.
     static func warp(_ image: CGImage, to corners: [CGPoint]) -> (image: CGImage, rect: CGRect)? {
         guard corners.count == 4, corners.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return nil }
-        let minX = (corners.map(\.x).min() ?? 0).rounded(.down), maxX = (corners.map(\.x).max() ?? 0).rounded(.up)
-        let minY = (corners.map(\.y).min() ?? 0).rounded(.down), maxY = (corners.map(\.y).max() ?? 0).rounded(.up)
+        // A small tolerance, so float noise (e.g. -1e-12 for a corner at 0) does not add a pixel.
+        let eps: CGFloat = 1e-6
+        let minX = ((corners.map(\.x).min() ?? 0) + eps).rounded(.down)
+        let maxX = ((corners.map(\.x).max() ?? 0) - eps).rounded(.up)
+        let minY = ((corners.map(\.y).min() ?? 0) + eps).rounded(.down)
+        let maxY = ((corners.map(\.y).max() ?? 0) - eps).rounded(.up)
         guard maxX > minX, maxY > minY else { return nil }
         // Core Image has its origin at the bottom-left: flip y against the bottom of the bounding box.
         func ci(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x, y: maxY - p.y) }
@@ -173,27 +177,63 @@ public enum DeviceCompositor {
     static let artworkCache = ArtworkCache()
 }
 
-/// Built-in frame images by (id, pixel scale, URL text), since previews render the same frame repeatedly.
+/// Built-in frame images by (id, pixel scale rounded to 1/1000, URL text), since previews render the same
+/// frame repeatedly. Bounded by a byte budget with least-recently-used eviction; images above
+/// `maxCachedPixels` are not cached (the caller draws the vectors directly).
 final class ArtworkCache: @unchecked Sendable {
-    // @unchecked: `images` is only accessed while holding `lock`; CGImage is immutable.
+    // @unchecked: `images`, `order` and `bytes` are only accessed while holding `lock`; CGImage is immutable.
     private struct Key: Hashable {
         let id: String
-        let scale: Double
+        let scale: Int
         let urlText: String?
     }
 
+    static let byteBudget = 96 * 1024 * 1024
+    static let maxCachedPixels = 8_000_000
+
     private let lock = NSLock()
     private var images: [Key: CGImage] = [:]
-    private let limit = 12
+    /// Keys from least to most recently used.
+    private var order: [Key] = []
+    private var bytes = 0
 
+    /// Number of cached images and their total size in bytes (for tests).
+    var usage: (count: Int, bytes: Int) { lock.withLock { (images.count, bytes) } }
+
+    /// The cached or newly drawn frame image; `nil` when it would exceed `maxCachedPixels` or cannot be drawn.
     func image(id: String, scale: CGFloat, urlText: String?) -> CGImage? {
-        let key = Key(id: id, scale: Double(scale), urlText: urlText)
-        if let cached = lock.withLock({ images[key] }) { return cached }
-        guard let image = DeviceArtwork.image(builtin: id, scale: scale, urlText: urlText) else { return nil }
+        guard scale.isFinite, scale > 0, let template = TemplateCatalog.builtin(id: id) else { return nil }
+        let rounded = (Double(scale) * 1000).rounded()
+        guard rounded >= 1, rounded < Double(Int.max) else { return nil }
+        let pixels = Double(template.frameSize.width * scale) * Double(template.frameSize.height * scale)
+        guard pixels <= Double(Self.maxCachedPixels) else { return nil }
+        let key = Key(id: id, scale: Int(rounded), urlText: urlText)
+        let cached: CGImage? = lock.withLock {
+            guard let image = images[key] else { return nil }
+            touch(key)
+            return image
+        }
+        if let cached { return cached }
+        guard let image = DeviceArtwork.image(builtin: id, scale: CGFloat(rounded / 1000), urlText: urlText)
+        else { return nil }
+        let size = image.bytesPerRow * image.height
         lock.withLock {
-            if images.count >= limit { images.removeAll() }
-            images[key] = image
+            if let old = images.updateValue(image, forKey: key) {
+                bytes -= old.bytesPerRow * old.height
+            }
+            bytes += size
+            touch(key)
+            while bytes > Self.byteBudget, order.count > 1, let oldest = order.first {
+                order.removeFirst()
+                if let removed = images.removeValue(forKey: oldest) { bytes -= removed.bytesPerRow * removed.height }
+            }
         }
         return image
+    }
+
+    /// Marks `key` as most recently used. Call with `lock` held.
+    private func touch(_ key: Key) {
+        order.removeAll { $0 == key }
+        order.append(key)
     }
 }

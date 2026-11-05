@@ -45,22 +45,18 @@ public enum Renderer {
     /// Returns `nil` only for a non-positive `outputScale` or if no context can be created.
     public static func render(_ input: RenderInput, outputScale: CGFloat = 1) -> CGImage? {
         guard outputScale > 0 else { return nil }
+        let contentRect = Self.contentRect(for: input)
         let bounds = CGRect(x: 0, y: 0, width: input.original.width, height: input.original.height)
-        // Same clipping as `ImageCropper`, so the content and the annotation offset agree.
-        var contentRect = bounds
-        if let crop = input.crop {
-            let clipped = crop.standardized.integral.intersection(bounds)
-            if !clipped.isNull, !clipped.isEmpty { contentRect = clipped }
-        }
         guard let content = contentRect == bounds ? input.original : input.original.cropping(to: contentRect)
         else { return nil }
 
         let style = input.style
-        if input.template != nil || TemplateGeometry.clamped(style.tilt) != .zero {
-            return renderDevice(input, content: content, contentRect: contentRect, outputScale: outputScale)
+        let resolved = Self.layout(for: input)
+        let layout = resolved.canvas
+        if let device = resolved.device {
+            return renderDevice(input, content: content, contentRect: contentRect, layout: layout, device: device,
+                                outputScale: outputScale)
         }
-        let layout = CanvasLayout.compute(
-            contentSize: CGSize(width: content.width, height: content.height), style: style)
         guard let ctx = canvasContext(size: layout.canvasSize, outputScale: outputScale) else { return nil }
 
         let canvas = CGRect(origin: .zero, size: layout.canvasSize)
@@ -92,6 +88,35 @@ public enum Renderer {
                                 originalScale: input.originalScale)
 
         return ctx.makeImage()
+    }
+
+    /// The canvas layout `render` uses, in canvas units (original pixels).
+    /// - `device` is non-nil exactly when the device path is used: a template is set or the (clamped)
+    ///   tilt is not zero. Then `canvas` is `CanvasLayout.compute(contentSize: device.imageSize, style:)`.
+    /// - Otherwise `canvas` is computed from the crop size.
+    /// The content is the crop clipped to the original (integral; a non-overlapping crop means the whole
+    /// original), as in `ImageCropper`. With a template and no tilt, a canvas point minus
+    /// `canvas.imageRect.origin` is a device-image point for
+    /// `TemplateGeometry.screenToContentTransform(…, frameScale: device.frameScale)`.
+    public static func layout(for input: RenderInput) -> (canvas: CanvasLayout, device: DeviceLayout?) {
+        let contentSize = contentRect(for: input).size
+        let style = input.style
+        guard input.template != nil || TemplateGeometry.clamped(style.tilt) != .zero else {
+            return (CanvasLayout.compute(contentSize: contentSize, style: style), nil)
+        }
+        let device = DeviceCompositor.layout(template: input.template, contentSize: contentSize, tilt: style.tilt)
+        return (CanvasLayout.compute(contentSize: device.imageSize, style: style), device)
+    }
+
+    /// The crop clipped to the original, integral; the whole original without (overlapping) crop.
+    /// Same clipping as `ImageCropper`, so the content and the annotation offset agree.
+    private static func contentRect(for input: RenderInput) -> CGRect {
+        let bounds = CGRect(x: 0, y: 0, width: input.original.width, height: input.original.height)
+        if let crop = input.crop {
+            let clipped = crop.standardized.integral.intersection(bounds)
+            if !clipped.isNull, !clipped.isEmpty { return clipped }
+        }
+        return bounds
     }
 
     /// sRGB, premultiplied alpha, `size × outputScale` pixels (rounded); user space flipped to a top-left
@@ -129,11 +154,10 @@ public enum Renderer {
     /// 3. with tilt: `DeviceCompositor.tilted`
     /// 4. the result is the image for `CanvasLayout`: background, padding, shadow from its alpha.
     private static func renderDevice(_ input: RenderInput, content: CGImage, contentRect: CGRect,
-                                     outputScale: CGFloat) -> CGImage? {
+                                     layout: CanvasLayout, device: DeviceLayout, outputScale: CGFloat) -> CGImage? {
         let style = input.style
         let template = input.template
         let contentSize = contentRect.size
-        let device = DeviceCompositor.layout(template: template, contentSize: contentSize, tilt: style.tilt)
         let radius = template == nil
             ? max(0, min(CGFloat(style.cornerRadius), min(contentSize.width, contentSize.height) / 2)) : 0
 
@@ -149,7 +173,6 @@ public enum Renderer {
         guard let tilted = DeviceCompositor.tilted(image, tilt: style.tilt) else { return nil }
         image = tilted
 
-        let layout = CanvasLayout.compute(contentSize: device.imageSize, style: style)
         guard let ctx = canvasContext(size: layout.canvasSize, outputScale: outputScale) else { return nil }
         BackgroundPainter.paint(style.background, in: ctx, canvas: CGRect(origin: .zero, size: layout.canvasSize),
                                 original: input.original, backgroundImage: input.backgroundImage,
@@ -158,6 +181,9 @@ public enum Renderer {
         setShadow(style.shadow, in: ctx, outputScale: outputScale)
         // The shadow follows the image's alpha (device outline, tilted shape), not a rectangle.
         ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        // `image` has whole pixels (device: rounded frame size; tilt: integral bounding box of the corners),
+        // while `imageRect` has the exact size from `DeviceLayout`. Drawing it into `imageRect` stretches it
+        // by less than one output pixel, so the screen lands where `screenToContentTransform` expects it.
         ctx.drawUpright(image, in: layout.imageRect)
         ctx.endTransparencyLayer()
         ctx.restoreGState()
