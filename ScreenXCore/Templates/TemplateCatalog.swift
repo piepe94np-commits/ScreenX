@@ -51,7 +51,7 @@ public enum TemplateCatalog {
 
     /// Portrait geometry; landscape variants are rotated with `rotatedToLandscape`.
     private static func tablet(id: String, name: String) -> DeviceTemplate {
-        make(id, name, frame: CGSize(width: 1800, height: 2440),
+        make(id, name, frame: CGSize(width: 1800, height: 2340),
              screen: CGRect(x: 90, y: 90, width: 1620, height: 2160), radius: 40, aspect: [3, 4])
     }
 

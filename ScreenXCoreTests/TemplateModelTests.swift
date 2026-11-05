@@ -36,10 +36,16 @@ struct TemplateModelTests {
     @Test func landscapeIsRotatedPortrait() throws {
         let portrait = try #require(TemplateCatalog.builtin(id: "tablet-portrait-dark"))
         let landscape = try #require(TemplateCatalog.builtin(id: "tablet-landscape-dark"))
-        #expect(landscape.frameSize == CGSize(width: 2440, height: 1800))
-        #expect(landscape.screenBounds == CGRect(x: 2440 - 90 - 2160, y: 90, width: 2160, height: 1620))
-        #expect(landscape.screenQuad[0] == CGPoint(x: 190, y: 90))
-        #expect(landscape.screenQuad[2] == CGPoint(x: 2350, y: 1710))
+        #expect(portrait.frameSize == CGSize(width: 1800, height: 2340))
+        #expect(landscape.frameSize == CGSize(width: 2340, height: 1800))
+        #expect(landscape.screenBounds == CGRect(x: 2340 - 90 - 2160, y: 90, width: 2160, height: 1620))
+        #expect(landscape.screenQuad[0] == CGPoint(x: 90, y: 90))
+        #expect(landscape.screenQuad[2] == CGPoint(x: 2250, y: 1710))
+        // Uniform 90-unit bezel on all four sides, in both orientations.
+        for template in [portrait, landscape] {
+            let s = template.screenBounds, f = template.frameSize
+            #expect([s.minX, s.minY, f.width - s.maxX, f.height - s.maxY] == [90, 90, 90, 90], "\(template.id)")
+        }
         #expect(landscape.preferredAspect == [4, 3])
         #expect(portrait.preferredAspect == [3, 4])
         #expect(TemplateCatalog.builtin(id: "phone-landscape-light")?.preferredAspect == [2556, 1179])
