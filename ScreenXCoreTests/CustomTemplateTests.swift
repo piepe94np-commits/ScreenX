@@ -74,7 +74,7 @@ struct CustomTemplateTests {
         }
         #expect(throws: TemplateError.invalidQuad) {
             try store.add(name: "x", imageData: data, imageExtension: "png",
-                          quad: [.zero, CGPoint(x: .nan, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 0, y: 10)])
+                          quad: [.zero, CGPoint(x: CGFloat.nan, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 0, y: 10)])
         }
         #expect(throws: TemplateError.invalidQuad) {
             try store.add(name: "x", imageData: data, imageExtension: "png",
