@@ -2,6 +2,10 @@
   "sourceLanguage" : "de",
   "strings" : {
     "Bereits von einer anderen App belegt" : {},
+    "Für den Bildschirm werden genau vier Eckpunkte innerhalb des Bildes benötigt." : {},
+    "Das Bildformat „%@“ wird für Vorlagen nicht unterstützt." : {},
+    "Das Bild der Vorlage konnte nicht gelesen werden." : {},
+    "Eigene Vorlage" : {},
     "Laptop, Silber" : {},
     "Laptop, Space-Schwarz" : {},
     "Monitor, Silber" : {},

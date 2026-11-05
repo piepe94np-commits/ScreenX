@@ -9,14 +9,24 @@ public struct LoadedDocument: Sendable {
     public var backgroundData: Data?
     /// `true` when the file was written by a newer app version; it may be viewed but not saved.
     public var isReadOnly: Bool
+    /// The custom template `model.template` names, from `assets/` or else the store; `nil` for builtins
+    /// and when it is found in neither (the placement in `model` is kept).
+    public var customTemplate: DeviceTemplate?
+    /// Bytes of the custom template's frame image (kept so the package can be saved again).
+    public var customFrameData: Data?
+    public var customFrameImage: CGImage?
 
     public init(model: DocumentModel, original: CGImage, backgroundImage: CGImage?,
-                backgroundData: Data?, isReadOnly: Bool) {
+                backgroundData: Data?, isReadOnly: Bool, customTemplate: DeviceTemplate? = nil,
+                customFrameData: Data? = nil, customFrameImage: CGImage? = nil) {
         self.model = model
         self.original = original
         self.backgroundImage = backgroundImage
         self.backgroundData = backgroundData
         self.isReadOnly = isReadOnly
+        self.customTemplate = customTemplate
+        self.customFrameData = customFrameData
+        self.customFrameImage = customFrameImage
     }
 }
 
@@ -44,14 +54,21 @@ public enum ScreenXPackage {
     static let documentFile = "document.json"
     static let previewFile = "preview.png"
     static let previewMaxEdge: CGFloat = 1024
+    static let assetsFolder = "assets"
 
     /// Builds the package. If `backgroundData` is given it is stored under the name referenced by
     /// `model.style.background` (`.image(file:)`), else as `background.<extension>`.
+    ///
+    /// If `model.template` names a custom template and `customTemplate` is that template, its JSON is
+    /// stored as `assets/<id>.json` and `customFrameData` as `assets/<frame file>`. Builtin templates are
+    /// never embedded. The preview is rendered with the template.
     public static func fileWrapper(
         model: DocumentModel,
         original: CGImage,
         backgroundData: Data?,
-        backgroundExtension: String?
+        backgroundExtension: String?,
+        customTemplate: DeviceTemplate? = nil,
+        customFrameData: Data? = nil
     ) throws -> FileWrapper {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -76,7 +93,21 @@ public enum ScreenXPackage {
             backgroundImage = decode(backgroundData)
         }
 
-        if let preview = renderPreview(model: model, original: original, backgroundImage: backgroundImage),
+        let custom = embeddableCustomTemplate(customTemplate, for: model)
+        var customFrameImage: CGImage?
+        if let custom {
+            var assets = [
+                "\(custom.id).json": FileWrapper(regularFileWithContents: try encoder.encode(custom)),
+            ]
+            if case .file(let file) = custom.frame, CustomTemplateStore.isSafeFileName(file), let customFrameData {
+                assets[file] = FileWrapper(regularFileWithContents: customFrameData)
+                customFrameImage = CustomTemplateStore.decode(customFrameData)
+            }
+            files[assetsFolder] = FileWrapper(directoryWithFileWrappers: assets)
+        }
+
+        if let preview = renderPreview(model: model, original: original, backgroundImage: backgroundImage,
+                                       customTemplate: custom, customFrameImage: customFrameImage),
            let data = try? ImageExporter.data(for: preview, scale: 1, format: .png, jpegQuality: 1) {
             files[previewFile] = FileWrapper(regularFileWithContents: data)
         }
@@ -84,7 +115,8 @@ public enum ScreenXPackage {
         return FileWrapper(directoryWithFileWrappers: files)
     }
 
-    public static func read(_ wrapper: FileWrapper) throws -> LoadedDocument {
+    /// Reads a package. A custom template comes from `assets/` first, else from `store`.
+    public static func read(_ wrapper: FileWrapper, store: CustomTemplateStore? = nil) throws -> LoadedDocument {
         guard wrapper.isDirectory, let files = wrapper.fileWrappers else {
             throw PackageError.corrupt(String(localized: "Kein Paket"))
         }
@@ -116,14 +148,18 @@ public enum ScreenXPackage {
             backgroundImage = decode(data)
         }
 
+        let custom = loadCustomTemplate(for: model, assets: files[assetsFolder]?.fileWrappers, store: store)
+
         return LoadedDocument(
             model: model, original: original, backgroundImage: backgroundImage,
-            backgroundData: backgroundData, isReadOnly: model.version > DocumentModel.currentVersion)
+            backgroundData: backgroundData, isReadOnly: model.version > DocumentModel.currentVersion,
+            customTemplate: custom?.template, customFrameData: custom?.frameData,
+            customFrameImage: custom?.frameImage)
     }
 
-    public static func read(from url: URL) throws -> LoadedDocument {
+    public static func read(from url: URL, store: CustomTemplateStore? = nil) throws -> LoadedDocument {
         // I/O errors (not found, permission) propagate unchanged; only format problems are `.corrupt`.
-        try read(FileWrapper(url: url, options: .immediate))
+        try read(FileWrapper(url: url, options: .immediate), store: store)
     }
 
     /// Writes atomically: builds a temporary package next to `url`, then swaps it in.
@@ -132,11 +168,14 @@ public enum ScreenXPackage {
         original: CGImage,
         backgroundData: Data?,
         backgroundExtension: String?,
+        customTemplate: DeviceTemplate? = nil,
+        customFrameData: Data? = nil,
         to url: URL
     ) throws {
         let wrapper = try fileWrapper(
             model: model, original: original,
-            backgroundData: backgroundData, backgroundExtension: backgroundExtension)
+            backgroundData: backgroundData, backgroundExtension: backgroundExtension,
+            customTemplate: customTemplate, customFrameData: customFrameData)
         let fileManager = FileManager.default
         let temp = url.deletingLastPathComponent()
             .appendingPathComponent(".\(url.lastPathComponent).tmp-\(UUID().uuidString)", isDirectory: true)
@@ -173,10 +212,48 @@ public enum ScreenXPackage {
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
-    private static func renderPreview(model: DocumentModel, original: CGImage, backgroundImage: CGImage?) -> CGImage? {
+    /// The id of a custom template `model` uses, or `nil` for none, a builtin or an id that cannot name a file.
+    private static func customTemplateID(for model: DocumentModel) -> String? {
+        guard let id = model.template?.templateID, TemplateCatalog.builtin(id: id) == nil,
+              CustomTemplateStore.isValidID(id) else { return nil }
+        return id
+    }
+
+    private static func embeddableCustomTemplate(_ template: DeviceTemplate?, for model: DocumentModel) -> DeviceTemplate? {
+        guard let template, let id = customTemplateID(for: model), template.id == id else { return nil }
+        return template
+    }
+
+    /// `assets/` first, the store second, separately for the JSON and the frame image.
+    private static func loadCustomTemplate(
+        for model: DocumentModel, assets: [String: FileWrapper]?, store: CustomTemplateStore?
+    ) -> (template: DeviceTemplate, frameData: Data?, frameImage: CGImage?)? {
+        guard let id = customTemplateID(for: model) else { return nil }
+        var template: DeviceTemplate?
+        if let data = assets?["\(id).json"]?.regularFileContents,
+           let embedded = try? JSONDecoder().decode(DeviceTemplate.self, from: data), embedded.id == id {
+            template = embedded
+        } else {
+            template = store?.template(id: id)
+        }
+        guard let template else { return nil }
+        guard case .file(let file) = template.frame, CustomTemplateStore.isSafeFileName(file) else {
+            return (template, nil, nil)
+        }
+        for data in [assets?[file]?.regularFileContents, store?.imageData(for: template)] {
+            if let data, let image = CustomTemplateStore.decode(data) { return (template, data, image) }
+        }
+        return (template, nil, nil)
+    }
+
+    private static func renderPreview(model: DocumentModel, original: CGImage, backgroundImage: CGImage?,
+                                      customTemplate: DeviceTemplate?, customFrameImage: CGImage?) -> CGImage? {
+        let template = model.template.flatMap { TemplateCatalog.builtin(id: $0.templateID) } ?? customTemplate
         let input = RenderInput(original: original, crop: model.crop, style: model.style,
                                 backgroundImage: backgroundImage, annotations: model.annotations,
-                                originalScale: model.original.scale > 0 ? CGFloat(model.original.scale) : 1)
+                                originalScale: model.original.scale > 0 ? CGFloat(model.original.scale) : 1,
+                                template: template, placement: model.template,
+                                customFrameImage: template == nil ? nil : customFrameImage)
         guard let full = Renderer.render(input, outputScale: 1) else { return nil }
         let longest = CGFloat(max(full.width, full.height))
         guard longest > previewMaxEdge else { return full }

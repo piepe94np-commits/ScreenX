@@ -96,9 +96,24 @@ extension EditorViewModel {
     private func writeProject(to url: URL) throws {
         var usesImage = false
         if case .image = model.style.background { usesImage = true }
+        let custom = customTemplateForSaving()
         try ScreenXPackage.write(
             model: model, original: original, backgroundData: usesImage ? backgroundData : nil,
-            backgroundExtension: backgroundExtension, to: url)
+            backgroundExtension: backgroundExtension,
+            customTemplate: custom.template, customFrameData: custom.frameData, to: url)
+    }
+
+    /// Eigene Vorlage, die ins Paket kommt: die aus dem geöffneten Paket, sonst die aus dem Vorlagenordner.
+    private func customTemplateForSaving() -> (template: DeviceTemplate?, frameData: Data?) {
+        guard let id = model.template?.templateID, TemplateCatalog.builtin(id: id) == nil else { return (nil, nil) }
+        if let loadedCustomTemplate, loadedCustomTemplate.id == id, let loadedCustomFrameData {
+            return (loadedCustomTemplate, loadedCustomFrameData)
+        }
+        let store = CustomTemplateStore.shared
+        if let template = store.template(id: id) {
+            return (template, store.imageData(for: template))
+        }
+        return (loadedCustomTemplate?.id == id ? loadedCustomTemplate : nil, nil)
     }
 
     /// Sichern-Dialog für das Projekt; `nil` bei Abbruch.
@@ -135,7 +150,7 @@ extension EditorViewModel {
     static func open(url: URL, settings: @escaping () -> AppSettings) {
         if EditorWindowController.focus(fileURL: url) { return }
         do {
-            let loaded = try ScreenXPackage.read(from: url)
+            let loaded = try ScreenXPackage.read(from: url, store: .shared)
             EditorWindowController.open(EditorViewModel(loaded: loaded, fileURL: url, settings: settings))
         } catch {
             present(error)

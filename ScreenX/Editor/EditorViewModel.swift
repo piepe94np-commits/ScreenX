@@ -35,6 +35,10 @@ final class EditorViewModel {
     private(set) var backgroundImage: CGImage?
     private(set) var backgroundData: Data?
     private(set) var backgroundExtension: String?
+    /// Eigene Vorlage aus dem geöffneten Paket samt Bilddaten; sie wird beim Sichern wieder eingebettet,
+    /// auch wenn sie im Vorlagenordner inzwischen fehlt.
+    let loadedCustomTemplate: DeviceTemplate?
+    let loadedCustomFrameData: Data?
     var fileURL: URL?
     /// Mit einer neueren Version erstellt: nur ansehen, nicht ändern oder sichern.
     let isReadOnly: Bool
@@ -98,6 +102,8 @@ final class EditorViewModel {
             scale: Double(capture.scale), mode: capture.mode, windowTitle: capture.windowTitle)
         model = DocumentModel(original: info, style: style)
         original = capture.image
+        loadedCustomTemplate = nil
+        loadedCustomFrameData = nil
         isReadOnly = false
         settingsProvider = settings
         createdAt = capture.date
@@ -111,6 +117,8 @@ final class EditorViewModel {
         if case .image(let file) = loaded.model.style.background {
             backgroundExtension = (file as NSString).pathExtension
         }
+        loadedCustomTemplate = loaded.customTemplate
+        loadedCustomFrameData = loaded.customFrameData
         self.fileURL = fileURL
         isReadOnly = loaded.isReadOnly
         settingsProvider = settings
