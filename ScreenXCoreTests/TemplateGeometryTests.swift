@@ -92,6 +92,36 @@ struct TemplateGeometryTests {
         #expect(!close(tilted[1].y, tilted[0].y, 1))
     }
 
+    /// Reference: Ry(30°)·Rx(30°) applied to the centered square, projected with d = 2500.
+    /// Before shifting: (−565.590, −438.893), (259.575, −364.918), (550.636, 427.288), (−378.674, 532.351).
+    @Test func tiltCornersMatchReferenceRotation() {
+        let corners = TemplateGeometry.tiltCorners(size: CGSize(width: 1000, height: 1000), tilt: Tilt(x: 30, y: 30))
+        let expected = [CGPoint(x: 0, y: 0), CGPoint(x: 825.165, y: 73.975),
+                        CGPoint(x: 1116.226, y: 866.181), CGPoint(x: 186.916, y: 971.243)]
+        for (c, e) in zip(corners, expected) {
+            #expect(close(c.x, e.x, 0.01) && close(c.y, e.y, 0.01), "\(c) vs \(e)")
+        }
+    }
+
+    @Test func tiltIsClampedAndNonFiniteIgnored() {
+        let size = CGSize(width: 800, height: 600)
+        #expect(TemplateGeometry.tiltCorners(size: size, tilt: Tilt(x: 90, y: -200))
+                == TemplateGeometry.tiltCorners(size: size, tilt: Tilt(x: 30, y: -30)))
+        let nan = TemplateGeometry.tiltCorners(size: size, tilt: Tilt(x: .nan, y: .infinity))
+        let flat = TemplateGeometry.tiltCorners(size: size, tilt: .zero)
+        #expect(nan == flat)
+        #expect(TemplateGeometry.clamped(Tilt(x: 45, y: .nan)) == Tilt(x: 30, y: 0))
+        #expect(TemplateGeometry.isAffineEditable(template: nil, tilt: Tilt(x: .nan, y: 0)))
+        #expect(!TemplateGeometry.isAffineEditable(template: nil, tilt: Tilt(x: 100, y: 0)))
+    }
+
+    @Test func nonFiniteOffsetCountsAsCentered() {
+        let centered = TemplateGeometry.sourceRect(contentSize: content, screenSize: phoneScreen, fit: .fill, offset: .zero)
+        let nan = TemplateGeometry.sourceRect(contentSize: content, screenSize: phoneScreen, fit: .fill,
+                                              offset: CGPoint(x: CGFloat.nan, y: CGFloat.infinity))
+        #expect(nan.source == centered.source)
+    }
+
     @Test func affineMappingOnlyForRectQuadsWithoutTilt() throws {
         let phone = try #require(TemplateCatalog.builtin(id: "phone-portrait-light"))
         #expect(TemplateGeometry.isAffineEditable(template: phone, tilt: .zero))
