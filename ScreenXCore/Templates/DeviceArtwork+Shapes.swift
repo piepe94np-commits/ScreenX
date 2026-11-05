@@ -71,6 +71,10 @@ extension DeviceArtwork {
     }
 
     /// Uniform bezel, radius ≈ 170, pill-shaped camera island over the top of the screen, side buttons.
+    ///
+    /// The body inset (14), outer radius (176), edge/rim widths and the island offset (34 below the
+    /// screen top) are tuned to the catalog geometry (frame 1300×2660, screen inset 60, radius 150):
+    /// a 46-unit uniform bezel. Revisit them when the catalog's phone geometry changes.
     static func drawPhone(_ t: DeviceTemplate, palette p: Palette, in ctx: CGContext) {
         let body = CGRect(x: 14, y: 14, width: t.frameSize.width - 28, height: t.frameSize.height - 28)
         // Buttons first, so the body overlaps their inner ends.
@@ -238,9 +242,7 @@ extension DeviceArtwork {
     /// Fills `path`, minus `hole` (even-odd) when given, with a linear gradient of evenly spaced stops.
     static func fillGradient(_ path: CGPath, hole: CGPath? = nil, colors: [CGColor], from start: CGPoint,
                              to end: CGPoint, in ctx: CGContext) {
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let gradient = CGGradient(colorsSpace: space, colors: colors as CFArray, locations: nil)
-        else { return }
+        guard let gradient = CGGradient(colorsSpace: sRGB, colors: colors as CFArray, locations: nil) else { return }
         ctx.saveGState()
         ctx.addPath(path)
         if let hole { ctx.addPath(hole) }

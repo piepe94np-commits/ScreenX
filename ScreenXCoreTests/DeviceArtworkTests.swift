@@ -53,6 +53,39 @@ struct DeviceArtworkTests {
         }
     }
 
+    /// Probes 3 units inside and outside each screen edge midpoint: the cut-out sits exactly at the quad,
+    /// also for the rotated landscape variants. Edges on the frame boundary (browser) have no outside.
+    /// With rounded screen corners, a point just inside the bounding-box corner is opaque.
+    @Test func screenCutOutMatchesQuad() throws {
+        for template in TemplateCatalog.builtins {
+            let image = try #require(DeviceArtwork.image(builtin: template.id, scale: Self.scale, urlText: nil),
+                                     "\(template.id)")
+            let alpha = Alpha(image)
+            let s = template.screenBounds, f = template.frameSize
+            // (midpoint, outward direction, edge touches the frame boundary)
+            let edges: [(CGPoint, CGVector, Bool)] = [
+                (CGPoint(x: s.midX, y: s.minY), CGVector(dx: 0, dy: -1), s.minY <= 0),
+                (CGPoint(x: s.maxX, y: s.midY), CGVector(dx: 1, dy: 0), s.maxX >= f.width),
+                (CGPoint(x: s.midX, y: s.maxY), CGVector(dx: 0, dy: 1), s.maxY >= f.height),
+                (CGPoint(x: s.minX, y: s.midY), CGVector(dx: -1, dy: 0), s.minX <= 0),
+            ]
+            for (mid, out, onBoundary) in edges {
+                let inside = CGPoint(x: mid.x - 3 * out.dx, y: mid.y - 3 * out.dy)
+                #expect(alpha.at(inside, scale: Self.scale) == 0, "\(template.id) inside \(mid)")
+                if !onBoundary {
+                    let outside = CGPoint(x: mid.x + 3 * out.dx, y: mid.y + 3 * out.dy)
+                    #expect(alpha.at(outside, scale: Self.scale) == 255, "\(template.id) outside \(mid)")
+                }
+            }
+            if template.screenCornerRadius > 0 {
+                for corner in [CGPoint(x: s.minX + 2, y: s.minY + 2), CGPoint(x: s.maxX - 3, y: s.minY + 2),
+                               CGPoint(x: s.maxX - 3, y: s.maxY - 3), CGPoint(x: s.minX + 2, y: s.maxY - 3)] {
+                    #expect(alpha.at(corner, scale: Self.scale) == 255, "\(template.id) corner \(corner)")
+                }
+            }
+        }
+    }
+
     /// The camera island sits over the top center of the screen and stays opaque, also when rotated.
     @Test func phoneCameraIslandOpaque() throws {
         let portrait = try #require(TemplateCatalog.builtin(id: "phone-portrait-dark"))
@@ -78,6 +111,8 @@ struct DeviceArtworkTests {
         #expect(DeviceArtwork.image(builtin: "nope", scale: 1, urlText: nil) == nil)
         #expect(DeviceArtwork.image(builtin: "laptop-silver", scale: 0, urlText: nil) == nil)
         #expect(DeviceArtwork.image(builtin: "laptop-silver", scale: .nan, urlText: nil) == nil)
+        // 3000 × 6 = 18000 px > 16384.
+        #expect(DeviceArtwork.image(builtin: "laptop-silver", scale: 6, urlText: nil) == nil)
     }
 
     @Test func writesDeviceSnapshots() throws {

@@ -12,6 +12,12 @@ public enum DeviceArtwork {
     /// URL shown in the browser frame when no text is given.
     public static let defaultURLText = "example.com"
 
+    /// Largest pixel side `image(builtin:scale:urlText:)` renders.
+    public static let maxPixelSide = 16384
+
+    /// The color space of all fills and of `image(builtin:scale:urlText:)`.
+    static let sRGB: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+
     /// Draws the frame of the built-in template `id` into `ctx`, scaled from `frameSize` to `size`.
     ///
     /// The current user space of `ctx` must have its origin at the top-left with y pointing down
@@ -48,15 +54,17 @@ public enum DeviceArtwork {
     }
 
     /// The frame of the built-in template `id` as an sRGB image with premultiplied alpha,
-    /// `frameSize × scale` pixels (rounded). `nil` for unknown ids or an invalid scale.
+    /// `frameSize × scale` pixels (rounded). `nil` for unknown ids, an invalid scale, or when a side
+    /// would exceed `maxPixelSide`.
     public static func image(builtin id: String, scale: CGFloat, urlText: String?) -> CGImage? {
         guard let template = TemplateCatalog.builtin(id: id), scale.isFinite, scale > 0 else { return nil }
-        let width = max(1, Int((template.frameSize.width * scale).rounded()))
-        let height = max(1, Int((template.frameSize.height * scale).rounded()))
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(
+        let limit = CGFloat(maxPixelSide)
+        let w = (template.frameSize.width * scale).rounded(), h = (template.frameSize.height * scale).rounded()
+        guard w <= limit, h <= limit else { return nil }
+        let width = max(1, Int(w)), height = max(1, Int(h))
+        guard let ctx = CGContext(
                 data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
         ctx.translateBy(x: 0, y: CGFloat(height))
         ctx.scaleBy(x: 1, y: -1)
