@@ -55,7 +55,7 @@ struct DeviceArtworkTests {
 
     /// Probes 3 units inside and outside each screen edge midpoint: the cut-out sits exactly at the quad,
     /// also for the rotated landscape variants. Edges on the frame boundary (browser) have no outside.
-    /// With rounded screen corners, a point just inside the bounding-box corner is opaque.
+    /// With rounded screen corners, the cut-out follows `screenCornerRadius` on each corner's diagonal.
     @Test func screenCutOutMatchesQuad() throws {
         for template in TemplateCatalog.builtins {
             let image = try #require(DeviceArtwork.image(builtin: template.id, scale: Self.scale, urlText: nil),
@@ -78,9 +78,18 @@ struct DeviceArtworkTests {
                 }
             }
             if template.screenCornerRadius > 0 {
-                for corner in [CGPoint(x: s.minX + 2, y: s.minY + 2), CGPoint(x: s.maxX - 3, y: s.minY + 2),
-                               CGPoint(x: s.maxX - 3, y: s.maxY - 3), CGPoint(x: s.minX + 2, y: s.maxY - 3)] {
-                    #expect(alpha.at(corner, scale: Self.scale) == 255, "\(template.id) corner \(corner)")
+                // Along each corner's diagonal the rounded cut-out starts at k = r·(1 − 1/√2) per axis:
+                // 3 units before it is still frame, 3 units past it is screen.
+                let k = template.screenCornerRadius * (1 - 1 / 2.0.squareRoot())
+                let corners: [(CGPoint, CGFloat, CGFloat)] = [
+                    (CGPoint(x: s.minX, y: s.minY), 1, 1), (CGPoint(x: s.maxX, y: s.minY), -1, 1),
+                    (CGPoint(x: s.maxX, y: s.maxY), -1, -1), (CGPoint(x: s.minX, y: s.maxY), 1, -1),
+                ]
+                for (c, sx, sy) in corners {
+                    let frame = CGPoint(x: c.x + sx * (k - 3), y: c.y + sy * (k - 3))
+                    let screen = CGPoint(x: c.x + sx * (k + 3), y: c.y + sy * (k + 3))
+                    #expect(alpha.at(frame, scale: Self.scale) == 255, "\(template.id) corner frame \(frame)")
+                    #expect(alpha.at(screen, scale: Self.scale) == 0, "\(template.id) corner screen \(screen)")
                 }
             }
         }
