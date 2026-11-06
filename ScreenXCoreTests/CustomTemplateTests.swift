@@ -105,7 +105,7 @@ struct CustomTemplateTests {
         let wrapper = try ScreenXPackage.fileWrapper(
             model: Self.model(template: template.id), original: Self.original(),
             backgroundData: nil, backgroundExtension: nil,
-            customTemplate: template, customFrameData: try #require(store.imageData(for: template)))
+            customTemplate: template, customFrameData: store.imageData(for: template))
         let assets = try #require(wrapper.fileWrappers?["assets"]?.fileWrappers)
         let json = try #require(assets["\(template.id).json"]?.regularFileContents)
         let object = try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
