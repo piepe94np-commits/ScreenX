@@ -224,14 +224,16 @@ public enum ScreenXPackage {
         return template
     }
 
-    /// `assets/` first, the store second, separately for the JSON and the frame image.
+    /// `assets/` first, the store second, separately for the JSON and the frame image. An embedded JSON that
+    /// fails `CustomTemplateStore.isValid` (or names another id) counts as corrupt and is skipped.
     private static func loadCustomTemplate(
         for model: DocumentModel, assets: [String: FileWrapper]?, store: CustomTemplateStore?
     ) -> (template: DeviceTemplate, frameData: Data?, frameImage: CGImage?)? {
         guard let id = customTemplateID(for: model) else { return nil }
         var template: DeviceTemplate?
         if let data = assets?["\(id).json"]?.regularFileContents,
-           let embedded = try? JSONDecoder().decode(DeviceTemplate.self, from: data), embedded.id == id {
+           let embedded = try? JSONDecoder().decode(DeviceTemplate.self, from: data), embedded.id == id,
+           CustomTemplateStore.isValid(embedded) {
             template = embedded
         } else {
             template = store?.template(id: id)

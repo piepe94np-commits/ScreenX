@@ -10,6 +10,8 @@ public enum TemplateError: Error, Equatable, Sendable {
     /// Only png, jpg, jpeg, heic and tiff are accepted.
     case unsupportedImageType(String)
     case unreadableImage
+    /// More than `CustomTemplateStore.maxFrameSide` pixels on a side.
+    case imageTooLarge
 }
 
 extension TemplateError: LocalizedError {
@@ -21,6 +23,8 @@ extension TemplateError: LocalizedError {
             String(localized: "Das Bildformat „\(ext)“ wird für Vorlagen nicht unterstützt.")
         case .unreadableImage:
             String(localized: "Das Bild der Vorlage konnte nicht gelesen werden.")
+        case .imageTooLarge:
+            String(localized: "Das Bild der Vorlage ist zu groß (höchstens 16384 Pixel je Seite).")
         }
     }
 }
@@ -31,6 +35,8 @@ public final class CustomTemplateStore: @unchecked Sendable {
     /// Image types a custom frame may have.
     public static let allowedImageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tiff"]
     static let idPrefix = "custom-"
+    /// Largest frame side in pixels; also bounds templates read from JSON, which the renderer trusts.
+    public static let maxFrameSide: CGFloat = 16384
 
     public static var defaultDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -55,7 +61,15 @@ public final class CustomTemplateStore: @unchecked Sendable {
     public func all() -> [DeviceTemplate] {
         lock.lock()
         defer { lock.unlock() }
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        let names: [String]
+        do {
+            names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        } catch {
+            if !Self.isNoSuchFile(error) {
+                Self.logger.error("Cannot list templates: \(error.localizedDescription, privacy: .public)")
+            }
+            return []
+        }
         return names.filter { $0.hasSuffix(".json") }
             .compactMap { loadTemplate(stem: String($0.dropLast(5))) }
             .sorted { a, b in
@@ -79,21 +93,23 @@ public final class CustomTemplateStore: @unchecked Sendable {
         guard Self.allowedImageExtensions.contains(ext) else { throw TemplateError.unsupportedImageType(imageExtension) }
         guard let image = Self.decode(imageData) else { throw TemplateError.unreadableImage }
         let size = CGSize(width: image.width, height: image.height)
-        guard quad.count == 4,
-              quad.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...size.width).contains($0.x)
-                                && (0...size.height).contains($0.y) }) else { throw TemplateError.invalidQuad }
-        let xs = quad.map(\.x), ys = quad.map(\.y)
-        let boundsW = Int(((xs.max() ?? 0) - (xs.min() ?? 0)).rounded())
-        let boundsH = Int(((ys.max() ?? 0) - (ys.min() ?? 0)).rounded())
-        guard boundsW > 0, boundsH > 0 else { throw TemplateError.invalidQuad }
-        let divisor = Self.gcd(boundsW, boundsH)
+        guard size.width <= Self.maxFrameSide, size.height <= Self.maxFrameSide else {
+            throw TemplateError.imageTooLarge
+        }
+        // Checked before the init, whose precondition needs exactly 4 points.
+        guard quad.count == 4 else { throw TemplateError.invalidQuad }
 
         let id = Self.idPrefix + UUID().uuidString
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let template = DeviceTemplate(
+        var template = DeviceTemplate(
             id: id, name: trimmed.isEmpty ? String(localized: "Eigene Vorlage") : trimmed,
             frame: .file("\(id).\(ext)"), frameSize: size, screenQuad: quad,
-            screenCornerRadius: 0, preferredAspect: [boundsW / divisor, boundsH / divisor])
+            screenCornerRadius: 0, preferredAspect: nil)
+        guard Self.isValid(template) else { throw TemplateError.invalidQuad }
+        let boundsW = Int(template.screenBounds.width.rounded())
+        let boundsH = Int(template.screenBounds.height.rounded())
+        let divisor = Self.gcd(boundsW, boundsH)
+        template.preferredAspect = [boundsW / divisor, boundsH / divisor]
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -113,13 +129,21 @@ public final class CustomTemplateStore: @unchecked Sendable {
         return template
     }
 
-    /// Removes the template's JSON and image. Unknown ids are ignored.
+    /// Removes the template's JSON first (so a half-deleted template is no longer listed), then its images.
+    /// Unknown ids and a missing folder are ignored; other file errors are thrown.
     public func delete(id: String) throws {
         guard Self.isValidID(id) else { return }
         lock.lock()
         defer { lock.unlock() }
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        for name in names where (name as NSString).deletingPathExtension == id {
+        let names: [String]
+        do {
+            names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        } catch let error where Self.isNoSuchFile(error) {
+            return
+        }
+        let json = "\(id).json"
+        let matching = names.filter { ($0 as NSString).deletingPathExtension == id }
+        for name in matching.filter({ $0 == json }) + matching.filter({ $0 != json }) {
             try FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }
@@ -149,6 +173,34 @@ public final class CustomTemplateStore: @unchecked Sendable {
             && allowedImageExtensions.contains((name as NSString).pathExtension.lowercased())
     }
 
+    /// Geometry checks shared by `add` and every read path (store JSON, package `assets/`): the renderer
+    /// trusts these values, e.g. converts the frame size to pixel counts.
+    /// - `custom-<UUID>` id and a `.file` frame with a safe name
+    /// - finite, positive `frameSize`, at most `maxFrameSide` per side
+    /// - 4 finite quad points inside `[0,w]×[0,h]` with non-empty (rounded) bounds
+    /// - finite, non-negative corner radius
+    public static func isValid(_ template: DeviceTemplate) -> Bool {
+        guard isValidID(template.id), case .file(let file) = template.frame, isSafeFileName(file) else { return false }
+        let w = template.frameSize.width, h = template.frameSize.height
+        guard w.isFinite, h.isFinite, w > 0, h > 0, w <= maxFrameSide, h <= maxFrameSide else { return false }
+        let quad = template.screenQuad
+        guard quad.count == 4,
+              quad.allSatisfy({ $0.x.isFinite && $0.y.isFinite && (0...w).contains($0.x) && (0...h).contains($0.y) })
+        else { return false }
+        let bounds = template.screenBounds
+        guard bounds.width.rounded() > 0, bounds.height.rounded() > 0 else { return false }
+        let radius = template.screenCornerRadius
+        return radius.isFinite && radius >= 0
+    }
+
+    static func isNoSuchFile(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain,
+           ns.code == NSFileReadNoSuchFileError || ns.code == NSFileNoSuchFileError { return true }
+        if ns.domain == NSPOSIXErrorDomain, ns.code == Int(ENOENT) { return true }
+        return false
+    }
+
     static func decode(_ data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -156,12 +208,31 @@ public final class CustomTemplateStore: @unchecked Sendable {
 
     /// Caller holds `lock`.
     private func loadTemplate(stem: String) -> DeviceTemplate? {
-        guard Self.isValidID(stem) else { return nil }
+        guard Self.isValidID(stem) else {
+            Self.logger.notice("Skipping foreign file \(stem, privacy: .public).json in the template folder")
+            return nil
+        }
         let url = directory.appendingPathComponent("\(stem).json")
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            if !Self.isNoSuchFile(error) {
+                Self.logger.error("Skipping unreadable template \(stem, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+            return nil
+        }
         do {
             let template = try JSONDecoder().decode(DeviceTemplate.self, from: data)
-            return template.id == stem ? template : nil
+            guard template.id == stem else {
+                Self.logger.error("Skipping template \(stem, privacy: .public): its id is \(template.id, privacy: .public)")
+                return nil
+            }
+            guard Self.isValid(template) else {
+                Self.logger.error("Skipping template \(stem, privacy: .public): invalid frame or screen geometry")
+                return nil
+            }
+            return template
         } catch {
             Self.logger.error("Skipping unreadable template \(stem, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil

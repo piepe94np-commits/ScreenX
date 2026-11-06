@@ -5,6 +5,7 @@
     "Für den Bildschirm werden genau vier Eckpunkte innerhalb des Bildes benötigt." : {},
     "Das Bildformat „%@“ wird für Vorlagen nicht unterstützt." : {},
     "Das Bild der Vorlage konnte nicht gelesen werden." : {},
+    "Das Bild der Vorlage ist zu groß (höchstens 16384 Pixel je Seite)." : {},
     "Eigene Vorlage" : {},
     "Laptop, Silber" : {},
     "Laptop, Space-Schwarz" : {},

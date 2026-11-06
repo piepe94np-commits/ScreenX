@@ -1,6 +1,9 @@
 import AppKit
+import os
 import ScreenXCore
 import UniformTypeIdentifiers
+
+private let projectLogger = Logger(subsystem: "com.screenx.app", category: "project")
 
 /// Aktionen des Editors: Kopieren, Sichern, Export mit Dialog, Projekt sichern und öffnen.
 /// Fehler erscheinen als Hinweisfenster; das Dokument bleibt dabei offen und unverändert.
@@ -110,10 +113,16 @@ extension EditorViewModel {
             return (loadedCustomTemplate, loadedCustomFrameData)
         }
         let store = CustomTemplateStore.shared
+        let result: (template: DeviceTemplate?, frameData: Data?)
         if let template = store.template(id: id) {
-            return (template, store.imageData(for: template))
+            result = (template, store.imageData(for: template))
+        } else {
+            result = (loadedCustomTemplate?.id == id ? loadedCustomTemplate : nil, nil)
         }
-        return (loadedCustomTemplate?.id == id ? loadedCustomTemplate : nil, nil)
+        if result.template != nil, result.frameData == nil {
+            projectLogger.error("Custom template \(id, privacy: .public) is saved without its frame image")
+        }
+        return result
     }
 
     /// Sichern-Dialog für das Projekt; `nil` bei Abbruch.

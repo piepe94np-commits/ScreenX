@@ -86,8 +86,62 @@ struct CustomTemplateTests {
         #expect(throws: TemplateError.unreadableImage) {
             try store.add(name: "x", imageData: Data("nope".utf8), imageExtension: "png", quad: Self.quad)
         }
+        #expect(throws: TemplateError.imageTooLarge) {
+            try store.add(name: "x", imageData: try Self.frameData(16385, 1), imageExtension: "png",
+                          quad: [.zero, CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 1), CGPoint(x: 0, y: 1)])
+        }
         #expect(store.all().isEmpty)
         #expect(TemplateError.invalidQuad.errorDescription?.isEmpty == false)
+        #expect(TemplateError.imageTooLarge.errorDescription?.isEmpty == false)
+    }
+
+    /// Embedded JSON with absurd geometry, an unsafe frame name or another id counts as corrupt.
+    @Test func invalidEmbeddedTemplatesAreIgnored() throws {
+        let dir = Self.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = CustomTemplateStore(directory: dir)
+        let template = try store.add(name: "Rahmen", imageData: Self.frameData(),
+                                     imageExtension: "png", quad: Self.quad)
+        let wrapper = try ScreenXPackage.fileWrapper(
+            model: Self.model(template: template.id), original: Self.original(),
+            backgroundData: nil, backgroundExtension: nil,
+            customTemplate: template, customFrameData: try #require(store.imageData(for: template)))
+        let assets = try #require(wrapper.fileWrappers?["assets"]?.fileWrappers)
+        let json = try #require(assets["\(template.id).json"]?.regularFileContents)
+        let object = try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
+
+        func read(patching key: String, _ value: Any) throws -> LoadedDocument {
+            var patched = object
+            patched[key] = value
+            var newAssets = assets
+            newAssets["\(template.id).json"] = FileWrapper(
+                regularFileWithContents: try JSONSerialization.data(withJSONObject: patched))
+            var files = wrapper.fileWrappers ?? [:]
+            files["assets"] = FileWrapper(directoryWithFileWrappers: newAssets)
+            return try ScreenXPackage.read(FileWrapper(directoryWithFileWrappers: files))
+        }
+
+        #expect(try ScreenXPackage.read(wrapper).customTemplate == template)
+        #expect(try read(patching: "frameSize", [1e20, 1e20]).customTemplate == nil)
+        #expect(try read(patching: "frameSize", [0, 120]).customTemplate == nil)
+        #expect(try read(patching: "frame", ["file": "../x.png"]).customTemplate == nil)
+        #expect(try read(patching: "frame", ["builtin": "laptop-silver"]).customTemplate == nil)
+        #expect(try read(patching: "id", "custom-\(UUID())").customTemplate == nil)
+        #expect(try read(patching: "screenQuad", [[0, 0], [500, 0], [500, 50], [0, 50]]).customTemplate == nil)
+        #expect(try read(patching: "screenCornerRadius", -1).customTemplate == nil)
+
+        // The same JSON in the store is skipped there too.
+        var huge = object
+        huge["frameSize"] = [1e20, 1e20]
+        try JSONSerialization.data(withJSONObject: huge).write(to: dir.appendingPathComponent("\(template.id).json"))
+        #expect(store.template(id: template.id) == nil)
+        #expect(store.all().isEmpty)
+    }
+
+    @Test func deleteInMissingFolderIsNoOp() throws {
+        let store = CustomTemplateStore(directory: Self.tempDirectory())
+        try store.delete(id: "custom-\(UUID())")
+        #expect(store.all().isEmpty)
     }
 
     @Test func customTemplateEmbeddedInPackage() throws {
