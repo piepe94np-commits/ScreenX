@@ -70,6 +70,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         super.init(window: window)
         window.delegate = self
         viewModel.undoManager = undoStack
+        if !viewModel.isReadOnly {
+            // „+ Eigene Vorlage …“: die neue Vorlage gilt sofort für dieses Dokument (ein Undo-Schritt).
+            viewModel.onCreateCustomTemplate = { [weak viewModel] in
+                CustomTemplateWindow.show(store: .shared) { template in
+                    viewModel?.selectTemplate(id: template.id)
+                }
+            }
+        }
         observeUndo()
         observeViewModel()
         installToolKeys()

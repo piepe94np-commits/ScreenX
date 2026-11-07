@@ -265,15 +265,7 @@ struct TemplateSection: View {
     private func select(_ id: String?) {
         guard id != currentID else { return }
         colorEdit.finish(vm)
-        vm.apply(String(localized: "Vorlage")) { model in
-            guard let id else {
-                model.template = nil
-                return
-            }
-            var placement = model.template ?? TemplatePlacement(templateID: id)
-            placement.templateID = id
-            model.template = placement
-        }
+        vm.selectTemplate(id: id)
     }
 }
 

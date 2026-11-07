@@ -272,6 +272,21 @@ final class EditorViewModel {
         }
     }
 
+    /// Wechselt die Vorlage (ein Undo-Schritt); Einpassen, Füllfarbe, Ausschnitt und Adresse bleiben.
+    /// `nil` heißt ohne Gerät.
+    func selectTemplate(id: String?) {
+        guard id != model.template?.templateID else { return }
+        apply(String(localized: "Vorlage")) { model in
+            guard let id else {
+                model.template = nil
+                return
+            }
+            var placement = model.template ?? TemplatePlacement(templateID: id)
+            placement.templateID = id
+            model.template = placement
+        }
+    }
+
     /// Eigene Vorlagen wurden angelegt oder gelöscht: eine eigene bzw. fehlende Vorlage neu auflösen.
     private func customTemplatesDidChange() {
         guard let id = model.template?.templateID, TemplateCatalog.builtin(id: id) == nil else { return }

@@ -1,6 +1,14 @@
 {
   "sourceLanguage" : "de",
   "strings" : {
+    "Eigene Vorlage anlegen" : {},
+    "PNG oder PDF hierher ziehen" : {},
+    "Datei wählen …" : {},
+    "Klicke die vier Ecken des Displays an (oben links beginnend, im Uhrzeigersinn)" : {},
+    "Name" : {},
+    "Name der Vorlage" : {},
+    "Die Vorlage konnte nicht angelegt werden." : {},
+    "OK" : {},
     "Zum Bearbeiten der Anmerkungen Kippen auf 0 stellen bzw. eine gerade Vorlage wählen." : {},
     "Vorlage nicht gefunden – Screenshot wird ohne Gerät gezeigt." : {},
     "Für dieses Gerät besser im Format %@ aufnehmen." : {},
