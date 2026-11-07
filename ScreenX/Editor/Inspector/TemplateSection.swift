@@ -127,7 +127,7 @@ struct TemplateSection: View {
         let isSelected = group.variants.contains { $0.id == currentID }
         return VStack(spacing: 4) {
             TemplateThumbnail(title: group.title,
-                              image: TemplateCatalog.builtin(id: shownID).flatMap(TemplateThumbnailCache.image(for:)),
+                              image: TemplateCatalog.builtin(id: shownID).flatMap { TemplateThumbnailCache.image(for: $0) },
                               isSelected: isSelected) { select(shownID) }
             Picker(group.title, selection: Binding(
                 get: { shownID },
