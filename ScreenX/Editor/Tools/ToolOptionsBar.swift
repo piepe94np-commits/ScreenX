@@ -58,7 +58,7 @@ struct ToolOptionsBar: View {
         guard vm.isAnnotationEditable else {
             return String(localized: "Zum Bearbeiten der Anmerkungen Kippen auf 0 stellen bzw. eine gerade Vorlage wählen.")
         }
-        switch vm.tool {
+        return switch vm.tool {
         case .crop: String(localized: "Rahmen ziehen, um das Bild zuzuschneiden. ⇧ hält das Seitenverhältnis.")
         default: String(localized: "Anmerkung anklicken, um sie zu bearbeiten.")
         }
