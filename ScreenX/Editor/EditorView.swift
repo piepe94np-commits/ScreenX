@@ -13,6 +13,7 @@ struct EditorView: View {
             VStack(spacing: 0) {
                 ToolOptionsBar(vm: vm)
                 if vm.isReadOnly { readOnlyBanner }
+                if vm.isTemplateMissing { MissingTemplateHint().banner() }
                 CanvasView(vm: vm)
             }
             Divider()

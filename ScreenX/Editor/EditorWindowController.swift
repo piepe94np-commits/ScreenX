@@ -108,7 +108,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
               let characters = event.charactersIgnoringModifiers, characters.count == 1,
               let character = characters.first, let tool = EditorTool(key: character)
         else { return false }
-        guard !viewModel.isReadOnly || tool == .select else { return false }
+        guard viewModel.canUse(tool) else { return false }
         viewModel.tool = tool
         return true
     }

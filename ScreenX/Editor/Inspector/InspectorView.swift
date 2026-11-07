@@ -1,13 +1,12 @@
 import ScreenXCore
 import SwiftUI
 
-/// Inspektor rechts im Editor mit den Reitern „Stil“ und „Export“.
-/// Den Reiter „Vorlage“ gibt es erst in M4.
+/// Inspektor rechts im Editor mit den Reitern „Stil“, „Vorlage“ und „Export“.
 struct InspectorView: View {
     let vm: EditorViewModel
     @Binding var settings: AppSettings
 
-    private enum InspectorTab: Hashable { case style, export }
+    private enum InspectorTab: Hashable { case style, template, export }
 
     @State private var tab: InspectorTab = .style
 
@@ -15,6 +14,7 @@ struct InspectorView: View {
         VStack(spacing: 0) {
             Picker(String(localized: "Reiter"), selection: $tab) {
                 Text("Stil").tag(InspectorTab.style)
+                Text("Vorlage").tag(InspectorTab.template)
                 Text("Export").tag(InspectorTab.export)
             }
             .pickerStyle(.segmented)
@@ -27,6 +27,9 @@ struct InspectorView: View {
                     case .style:
                         StyleSection(vm: vm)
                             // Dokumente einer neueren Version sind nur zum Ansehen.
+                            .disabled(vm.isReadOnly)
+                    case .template:
+                        TemplateSection(vm: vm)
                             .disabled(vm.isReadOnly)
                     case .export:
                         ExportSection(vm: vm, settings: $settings)

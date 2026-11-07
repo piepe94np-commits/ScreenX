@@ -29,7 +29,8 @@ struct EditorToolbar: ToolbarContent {
             HStack(spacing: 2) {
                 ForEach(EditorTool.allCases, id: \.self) { tool in
                     ToolButton(tool: tool, isActive: vm.tool == tool) { vm.tool = tool }
-                        .disabled(vm.isReadOnly && tool != .select)
+                        // Nur lesbar bzw. gekippt oder schräge Vorlage: nur die Auswahl (ohne Interaktion).
+                        .disabled(!vm.canUse(tool))
                 }
             }
         }

@@ -30,7 +30,14 @@ final class EditorViewModel {
 
     private static let debounce: Duration = .milliseconds(16)
 
-    private(set) var model: DocumentModel
+    private(set) var model: DocumentModel {
+        didSet {
+            if model.template?.templateID != oldValue.template?.templateID { resolveTemplate() }
+            if model.template != oldValue.template || model.style.tilt != oldValue.style.tilt {
+                enforceAnnotationLock()
+            }
+        }
+    }
     let original: CGImage
     private(set) var backgroundImage: CGImage?
     private(set) var backgroundData: Data?
@@ -39,6 +46,15 @@ final class EditorViewModel {
     /// auch wenn sie im Vorlagenordner inzwischen fehlt.
     let loadedCustomTemplate: DeviceTemplate?
     let loadedCustomFrameData: Data?
+    private let loadedCustomFrameImage: CGImage?
+    /// Die Vorlage von `model.template`: mitgeliefert, aus dem Paket oder aus dem Vorlagenordner.
+    /// `nil` ohne Vorlage und wenn sie fehlt (`isTemplateMissing`); dann zeigt die Fläche das Bild ohne Gerät,
+    /// `model.template` bleibt erhalten.
+    private(set) var resolvedTemplate: DeviceTemplate?
+    /// Rahmenbild von `resolvedTemplate`, wenn es eine eigene Vorlage ist.
+    private(set) var customFrameImage: CGImage?
+    /// Öffnet das Fenster zum Anlegen einer eigenen Vorlage; `nil` blendet „+ Eigene Vorlage …“ aus.
+    var onCreateCustomTemplate: (@MainActor () -> Void)?
     var fileURL: URL?
     /// Mit einer neueren Version erstellt: nur ansehen, nicht ändern oder sichern.
     let isReadOnly: Bool
@@ -104,9 +120,11 @@ final class EditorViewModel {
         original = capture.image
         loadedCustomTemplate = nil
         loadedCustomFrameData = nil
+        loadedCustomFrameImage = nil
         isReadOnly = false
         settingsProvider = settings
         createdAt = capture.date
+        resolveTemplate()
     }
 
     init(loaded: LoadedDocument, fileURL: URL, settings: @escaping () -> AppSettings) {
@@ -119,10 +137,12 @@ final class EditorViewModel {
         }
         loadedCustomTemplate = loaded.customTemplate
         loadedCustomFrameData = loaded.customFrameData
+        loadedCustomFrameImage = loaded.customFrameImage
         self.fileURL = fileURL
         isReadOnly = loaded.isReadOnly
         settingsProvider = settings
         createdAt = Date()
+        resolveTemplate()
     }
 
     // MARK: - Abgeleitete Werte
@@ -137,10 +157,14 @@ final class EditorViewModel {
         model.original.scale > 0 ? CGFloat(model.original.scale) : 1
     }
 
-    /// Aufteilung der Arbeitsfläche in Pixeln des Originals.
+    /// Aufteilung der Arbeitsfläche in Pixeln des Originals (wie beim Export, mit Vorlage und Kippen).
     var canvasLayout: CanvasLayout {
-        let content = model.crop?.size ?? CGSize(width: original.width, height: original.height)
-        return CanvasLayout.compute(contentSize: content, style: model.style)
+        Renderer.layout(for: layoutInput(preview: false)).canvas
+    }
+
+    /// Größe des (zugeschnittenen) Bildinhalts in Pixeln, wie er in die Vorlage kommt.
+    var contentSize: CGSize {
+        Renderer.contentRect(for: layoutInput(preview: false)).size
     }
 
     /// Größe der Arbeitsfläche in Pixeln des Originals (wie exportiert).
@@ -152,25 +176,28 @@ final class EditorViewModel {
     /// Der angezeigte Zuschnitt: beim Zuschnitt-Werkzeug keiner (die Fläche zeigt das ganze Original).
     private var displayCrop: CGRect? { tool == .crop ? nil : model.crop }
 
-    /// Die auf der angezeigten Fläche sichtbaren Anmerkungen (wie beim Rendern). Nur sie lassen sich treffen,
-    /// auswählen und bearbeiten; ganz weggeschnittene bleiben unberührt.
+    /// Die auf der angezeigten Fläche sichtbaren Anmerkungen (wie beim Rendern; mit Vorlage nur, was im
+    /// Bildschirm liegt). Nur sie lassen sich treffen, auswählen und bearbeiten; ganz weggeschnittene bleiben
+    /// unberührt. Ohne affine Abbildung (`isAnnotationEditable`) keine.
     var interactiveAnnotations: [Annotation] {
-        let visible = displayCrop ?? originalBounds
+        guard let visible = CanvasMapping(input: layoutInput(preview: true), viewScale: 1)?.visibleRect
+        else { return [] }
         return model.annotations.filter { AnnotationGeometry.isVisible($0, in: visible) }
     }
 
-    /// Aufteilung der angezeigten Arbeitsfläche (mit `displayCrop`).
+    /// Aufteilung der angezeigten Arbeitsfläche (mit `displayCrop`, Vorlage und Kippen wie die Vorschau).
     var displayLayout: CanvasLayout {
-        CanvasLayout.compute(contentSize: displayCrop?.size ?? originalBounds.size, style: model.style)
+        Renderer.layout(for: layoutInput(preview: true)).canvas
     }
 
     /// Größe der angezeigten Arbeitsfläche in Pixeln.
     var displaySize: CGSize { displayLayout.canvasSize }
 
-    /// Abbildung zwischen Ansichtspunkten der angezeigten Arbeitsfläche und Pixeln des Originals.
-    /// `viewScale` sind Ansichtspunkte je Pixel der Arbeitsfläche.
-    func canvasMapping(viewScale: CGFloat) -> CanvasMapping {
-        CanvasMapping(layout: displayLayout, crop: displayCrop, viewScale: viewScale)
+    /// Abbildung zwischen Ansichtspunkten der angezeigten Arbeitsfläche und Pixeln des Originals, durch die
+    /// Vorlage hindurch. `viewScale` sind Ansichtspunkte je Pixel der Arbeitsfläche.
+    /// `nil`, solange sich Anmerkungen nicht bearbeiten lassen (Kippen bzw. schräge Vorlage).
+    func canvasMapping(viewScale: CGFloat) -> CanvasMapping? {
+        CanvasMapping(input: layoutInput(preview: true), viewScale: viewScale)
     }
 
     /// Eingabe für Export (`preview == false`) bzw. Vorschau: Die Vorschau nutzt `displayCrop` und
@@ -180,9 +207,69 @@ final class EditorViewModel {
         if preview, let id = editingTextID, let index = annotations.firstIndex(where: { $0.id == id }) {
             annotations[index] = Self.withText(annotations[index], "", height: nil)
         }
-        return RenderInput(original: original, crop: preview ? displayCrop : model.crop, style: model.style,
+        return layoutInput(preview: preview, annotations: annotations)
+    }
+
+    /// Die eine Quelle für Vorschau, Export und Aufteilung der Fläche. Mit dem Zuschnitt-Werkzeug zeigt die
+    /// Vorschau das ganze Original ohne Vorlage und ohne Kippen.
+    private func layoutInput(preview: Bool, annotations: [Annotation] = []) -> RenderInput {
+        let plain = preview && tool == .crop
+        var style = model.style
+        if plain { style.tilt = .zero }
+        return RenderInput(original: original, crop: preview ? displayCrop : model.crop, style: style,
                            backgroundImage: backgroundImage, annotations: annotations,
-                           originalScale: captureScale)
+                           originalScale: captureScale, template: plain ? nil : resolvedTemplate,
+                           placement: model.template, customFrameImage: plain ? nil : customFrameImage)
+    }
+
+    // MARK: - Vorlage
+
+    /// Das Dokument nennt eine Vorlage, die es weder mitgeliefert noch im Paket bzw. Vorlagenordner gibt.
+    var isTemplateMissing: Bool { model.template != nil && resolvedTemplate == nil }
+
+    /// Anmerkungen lassen sich nur bearbeiten, solange die Abbildung affin ist: Kippen 0/0 und
+    /// (falls vorhanden) eine rechteckige Vorlage.
+    var isAnnotationEditable: Bool {
+        TemplateGeometry.isAffineEditable(template: resolvedTemplate, tilt: model.style.tilt)
+    }
+
+    /// Ob `tool` wählbar ist: die Auswahl immer, alle anderen nur bearbeitbar und bei affiner Abbildung.
+    func canUse(_ tool: EditorTool) -> Bool {
+        tool == .select || (!isReadOnly && isAnnotationEditable)
+    }
+
+    /// Löst `model.template` neu auf (z. B. nachdem eine eigene Vorlage angelegt wurde).
+    func resolveTemplate() {
+        guard let id = model.template?.templateID else {
+            resolvedTemplate = nil
+            customFrameImage = nil
+            return
+        }
+        if let builtin = TemplateCatalog.builtin(id: id) {
+            resolvedTemplate = builtin
+            customFrameImage = nil
+            return
+        }
+        let store = CustomTemplateStore.shared
+        if let loadedCustomTemplate, loadedCustomTemplate.id == id {
+            resolvedTemplate = loadedCustomTemplate
+            customFrameImage = loadedCustomFrameImage ?? store.image(for: loadedCustomTemplate)
+        } else if let template = store.template(id: id) {
+            resolvedTemplate = template
+            customFrameImage = store.image(for: template)
+        } else {
+            resolvedTemplate = nil
+            customFrameImage = nil
+        }
+        scheduleRender()
+    }
+
+    /// Ohne affine Abbildung: nur die Auswahl ohne Interaktion, nichts ausgewählt (ein laufender Zuschnitt
+    /// wird verworfen).
+    private func enforceAnnotationLock() {
+        guard !isAnnotationEditable else { return }
+        if tool != .select { tool = .select }
+        if !selection.isEmpty { selection = [] }
     }
 
     private var snapshot: Snapshot {

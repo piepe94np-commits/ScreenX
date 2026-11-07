@@ -274,6 +274,69 @@ struct DeviceRenderTests {
         #expect(CGRect(x: 150, y: 100, width: 10, height: 10).contains(back), "\(back)")
     }
 
+    /// Task 6: `CanvasMapping(input:viewScale:)` maps original pixels to the editor view through the template
+    /// (crop, fill with offset, padding, view scale) and back, matching the rendered canvas.
+    @Test func canvasMappingWithTemplateRoundTrips() throws {
+        let ctx = Self.makeContext(width: 400, height: 300)
+        ctx.setFillColor(ColorValue(hex: "#2050FF")!.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        ctx.setFillColor(ColorValue(hex: "#FF0000")!.cgColor)
+        ctx.fill(CGRect(x: 200, y: 300 - 140 - 10, width: 10, height: 10)) // original (200, 140), y-up context
+        let original = try #require(ctx.makeImage())
+        let crop = CGRect(x: 50, y: 40, width: 300, height: 200)
+        let placement = TemplatePlacement(templateID: Self.phone.id, fit: .fill, offset: CGPoint(x: -0.2, y: 0))
+        let input = RenderInput(original: original, crop: crop, style: Self.style(padding: 30),
+                                template: Self.phone, placement: placement)
+        let viewScale: CGFloat = 0.75
+        let mapping = try #require(CanvasMapping(input: input, viewScale: viewScale))
+
+        // Round trips in both directions.
+        for p in [CGPoint(x: 60, y: 50), CGPoint(x: 205, y: 145), CGPoint(x: 340, y: 230)] {
+            let back = mapping.toOriginal(mapping.toView(p))
+            #expect(abs(back.x - p.x) < 1e-6 && abs(back.y - p.y) < 1e-6, "\(p) → \(back)")
+        }
+        let v = CGPoint(x: 123.5, y: 321.25)
+        let vBack = mapping.toView(mapping.toOriginal(v))
+        #expect(abs(vBack.x - v.x) < 1e-6 && abs(vBack.y - v.y) < 1e-6)
+
+        // Uniform scale: 10 original pixels are 10 × scale view points on both axes.
+        let a = mapping.toView(CGPoint(x: 200, y: 140)), b = mapping.toView(CGPoint(x: 210, y: 150))
+        #expect(abs((b.x - a.x) - 10 * mapping.scale) < 1e-6 && abs((b.y - a.y) - 10 * mapping.scale) < 1e-6)
+        let layout = try #require(Renderer.layout(for: input).device)
+        let screenHeight = Self.phone.screenBounds.height * layout.frameScale
+        // `.fill` keeps the content height (200) across the screen height.
+        #expect(abs(mapping.scale - viewScale * screenHeight / 200) < 1e-6)
+
+        // The view point of the marker is red in a render at output scale = view scale; beside it is blue.
+        let image = try #require(Renderer.render(input, outputScale: viewScale))
+        let marker = mapping.toView(CGPoint(x: 205, y: 145))
+        #expect(Self.pixel(image, at: marker).isClose(to: Self.red, tolerance: 8), "marker \(Self.pixel(image, at: marker))")
+        let beside = mapping.toView(CGPoint(x: 190, y: 145))
+        #expect(Self.pixel(image, at: beside).isClose(to: Self.blue, tolerance: 8), "beside \(Self.pixel(image, at: beside))")
+
+        // Visible part: the fill crop of the content, in original pixels.
+        let width = 200 * Self.phone.screenBounds.width / Self.phone.screenBounds.height
+        let visible = mapping.visibleRect
+        #expect(abs(visible.width - width) < 1e-6 && visible.minY == 40 && visible.height == 200)
+        #expect(abs(visible.minX - (50 + (300 - width) / 2 * 0.8)) < 1e-6)
+
+        // Without template: the same as the plain layout mapping.
+        let plainInput = RenderInput(original: original, crop: crop, style: Self.style(padding: 30))
+        let plain = try #require(CanvasMapping(input: plainInput, viewScale: 0.5))
+        let legacy = CanvasMapping(layout: Renderer.layout(for: plainInput).canvas, crop: crop, viewScale: 0.5)
+        #expect(plain.toOriginal(v) == legacy.toOriginal(v))
+        #expect(plain.visibleRect == crop && plain.scale == 0.5)
+
+        // Not editable: tilt, or a skewed screen quad.
+        var tilted = input
+        tilted.style.tilt = Tilt(x: 5, y: 0)
+        #expect(CanvasMapping(input: tilted, viewScale: 1) == nil)
+        var skewed = Self.phone
+        skewed.screenQuad[1].x -= 40
+        #expect(CanvasMapping(input: RenderInput(original: original, style: Self.style(), template: skewed),
+                              viewScale: 1) == nil)
+    }
+
     @Test func artworkCacheIsBoundedAndLRU() throws {
         let cache = ArtworkCache()
         let id = "laptop-silver"

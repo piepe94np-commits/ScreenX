@@ -45,7 +45,7 @@ final class InlineTextEditor: NSObject, NSTextViewDelegate {
     }
 
     /// Öffnet, verschiebt oder schließt das Textfeld passend zu `vm.editingTextID`.
-    func sync(in host: NSView, vm: EditorViewModel, mapping: CanvasMapping, viewScale: CGFloat) {
+    func sync(in host: NSView, vm: EditorViewModel, mapping: CanvasMapping) {
         self.vm = vm
         guard let id = vm.editingTextID else {
             close()
@@ -70,7 +70,7 @@ final class InlineTextEditor: NSObject, NSTextViewDelegate {
             typingUndo.removeAllActions()
             host.addSubview(textView)
         }
-        layout(rect: rect, rotation: annotation.rotation, style: style, mapping: mapping, viewScale: viewScale)
+        layout(rect: rect, rotation: annotation.rotation, style: style, mapping: mapping)
         if isOpening {
             host.window?.makeFirstResponder(textView)
             textView.selectedRange = NSRange(location: (textView.string as NSString).length, length: 0)
@@ -90,7 +90,9 @@ final class InlineTextEditor: NSObject, NSTextViewDelegate {
     }
 
     private func layout(rect: CGRect, rotation: Double, style: AnnotationTextLayout.TextStyle,
-                        mapping: CanvasMapping, viewScale: CGFloat) {
+                        mapping: CanvasMapping) {
+        // Ansichtspunkte je Pixel des Originals (mit Vorlage auch deren Maßstab).
+        let viewScale = mapping.scale
         let origin = mapping.toView(rect.origin)
         let frame = CGRect(x: origin.x, y: origin.y, width: max(rect.width * viewScale, 1),
                            height: max(rect.height * viewScale, 1))

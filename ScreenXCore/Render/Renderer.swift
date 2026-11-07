@@ -110,7 +110,7 @@ public enum Renderer {
 
     /// The crop clipped to the original, integral; the whole original without (overlapping) crop.
     /// Same clipping as `ImageCropper`, so the content and the annotation offset agree.
-    private static func contentRect(for input: RenderInput) -> CGRect {
+    public static func contentRect(for input: RenderInput) -> CGRect {
         let bounds = CGRect(x: 0, y: 0, width: input.original.width, height: input.original.height)
         if let crop = input.crop {
             let clipped = crop.standardized.integral.intersection(bounds)

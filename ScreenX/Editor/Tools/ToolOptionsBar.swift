@@ -29,7 +29,8 @@ struct ToolOptionsBar: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            let groups = isSelection ? Self.groups(for: selected) : Self.groups(for: vm.tool)
+            let groups: [OptionGroup] = !vm.isAnnotationEditable ? []
+                : isSelection ? Self.groups(for: selected) : Self.groups(for: vm.tool)
             if groups.isEmpty {
                 Text(hint)
                     .foregroundStyle(.secondary)
@@ -53,6 +54,10 @@ struct ToolOptionsBar: View {
     }
 
     private var hint: String {
+        // Gekippt bzw. schräge Vorlage: Anmerkungen lassen sich nicht bearbeiten (R2).
+        guard vm.isAnnotationEditable else {
+            return String(localized: "Zum Bearbeiten der Anmerkungen Kippen auf 0 stellen bzw. eine gerade Vorlage wählen.")
+        }
         switch vm.tool {
         case .crop: String(localized: "Rahmen ziehen, um das Bild zuzuschneiden. ⇧ hält das Seitenverhältnis.")
         default: String(localized: "Anmerkung anklicken, um sie zu bearbeiten.")
