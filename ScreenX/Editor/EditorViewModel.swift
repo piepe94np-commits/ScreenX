@@ -111,6 +111,8 @@ final class EditorViewModel {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var shownGeneration = 0
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
+    /// Beobachtet `customTemplatesDidChange`; wird in `tearDown` entfernt.
+    @ObservationIgnored private var templatesObserver: (any NSObjectProtocol)?
 
     init(capture: Capture, style: Style, settings: @escaping () -> AppSettings) {
         let info = OriginalInfo(
@@ -125,6 +127,7 @@ final class EditorViewModel {
         settingsProvider = settings
         createdAt = capture.date
         resolveTemplate()
+        observeCustomTemplates()
     }
 
     init(loaded: LoadedDocument, fileURL: URL, settings: @escaping () -> AppSettings) {
@@ -143,6 +146,7 @@ final class EditorViewModel {
         settingsProvider = settings
         createdAt = Date()
         resolveTemplate()
+        observeCustomTemplates()
     }
 
     // MARK: - Abgeleitete Werte
@@ -238,8 +242,13 @@ final class EditorViewModel {
         tool == .select || (!isReadOnly && isAnnotationEditable)
     }
 
-    /// Löst `model.template` neu auf (z. B. nachdem eine eigene Vorlage angelegt wurde).
+    /// Löst `model.template` neu auf (z. B. nachdem eine eigene Vorlage angelegt wurde) und sperrt die
+    /// Werkzeuge, wenn die neue Abbildung nicht affin ist.
     func resolveTemplate() {
+        defer {
+            scheduleRender()
+            enforceAnnotationLock()
+        }
         guard let id = model.template?.templateID else {
             resolvedTemplate = nil
             customFrameImage = nil
@@ -261,7 +270,20 @@ final class EditorViewModel {
             resolvedTemplate = nil
             customFrameImage = nil
         }
-        scheduleRender()
+    }
+
+    /// Eigene Vorlagen wurden angelegt oder gelöscht: eine eigene bzw. fehlende Vorlage neu auflösen.
+    private func customTemplatesDidChange() {
+        guard let id = model.template?.templateID, TemplateCatalog.builtin(id: id) == nil else { return }
+        resolveTemplate()
+    }
+
+    private func observeCustomTemplates() {
+        templatesObserver = NotificationCenter.default.addObserver(
+            forName: .customTemplatesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.customTemplatesDidChange() }
+        }
     }
 
     /// Ohne affine Abbildung: nur die Auswahl ohne Interaktion, nichts ausgewählt (ein laufender Zuschnitt
@@ -696,6 +718,8 @@ final class EditorViewModel {
         renderTask = nil
         previewMaxPixelSize = nil
         noticeTask?.cancel()
+        if let templatesObserver { NotificationCenter.default.removeObserver(templatesObserver) }
+        templatesObserver = nil
         if let dragFolder { try? FileManager.default.removeItem(at: dragFolder) }
         dragFolder = nil
     }

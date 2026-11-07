@@ -127,4 +127,13 @@ struct StyleTests {
         #expect(style.background == Style.default.background)
         #expect(style.cornerRadius == 30)
     }
+
+    @Test func newCaptureStyleResetsTilt() {
+        var last = Style.default
+        last.padding = 90
+        last.tilt = Tilt(x: 12, y: -20)
+        let style = Style.forNewCapture(lastStyle: last, applyLastStyle: true)
+        #expect(style.tilt == .zero)
+        #expect(style.padding == 90)
+    }
 }

@@ -194,11 +194,21 @@ struct TemplateSection: View {
         case .fit:
             ColorPicker(String(localized: "Füllfarbe"), selection: fillColor, supportsOpacity: false)
         case .fill:
-            OffsetSlider(vm: vm, title: String(localized: "Ausschnitt X"),
+            let free = freeFillRange
+            OffsetSlider(vm: vm, title: String(localized: "Ausschnitt X"), isMovable: free.width > 0.5,
                          get: { $0.template?.offset.x ?? 0 }, set: { $0.template?.offset.x = $1 })
-            OffsetSlider(vm: vm, title: String(localized: "Ausschnitt Y"),
+            OffsetSlider(vm: vm, title: String(localized: "Ausschnitt Y"), isMovable: free.height > 0.5,
                          get: { $0.template?.offset.y ?? 0 }, set: { $0.template?.offset.y = $1 })
         }
+    }
+
+    /// Freier Spielraum des Ausschnitts beim Füllen in Pixeln des Inhalts (je Achse; 0 = nichts zu verschieben).
+    private var freeFillRange: CGSize {
+        guard let template = vm.resolvedTemplate else { return .zero }
+        let content = vm.contentSize
+        let source = TemplateGeometry.sourceRect(contentSize: content, screenSize: template.screenBounds.size,
+                                                 fit: .fill, offset: .zero).source
+        return CGSize(width: content.width - source.width, height: content.height - source.height)
     }
 
     private var fillColor: Binding<CGColor> {
@@ -234,6 +244,8 @@ struct TemplateSection: View {
             .onSubmit { commitURL() }
             .onChange(of: urlFocused) { _, focused in if !focused { commitURL() } }
             .onAppear { urlDraft = vm.model.template?.urlText ?? "" }
+            // Reiterwechsel bzw. Schließen des Fensters: der Entwurf geht nicht verloren.
+            .onDisappear { commitURL() }
             .onChange(of: vm.model.template?.urlText) { _, text in
                 if !urlFocused { urlDraft = text ?? "" }
             }
@@ -288,10 +300,12 @@ struct MissingTemplateHint: View {
 }
 
 /// Regler für den Ausschnitt beim Füllen (−1 … 1, 0 = mittig). Ein Zug ist ein Undo-Schritt;
-/// „Mitte“ setzt ihn zurück (ebenfalls ein Schritt).
+/// „Mitte“ setzt ihn zurück (ebenfalls ein Schritt). Ohne freien Spielraum (`isMovable` false) ist der Regler
+/// deaktiviert; „Mitte“ bleibt nutzbar, falls noch ein Wert gespeichert ist.
 private struct OffsetSlider: View {
     let vm: EditorViewModel
     let title: String
+    let isMovable: Bool
     let get: (DocumentModel) -> CGFloat
     let set: (inout DocumentModel, CGFloat) -> Void
 
@@ -310,6 +324,7 @@ private struct OffsetSlider: View {
                     vm.endContinuousChange(String(localized: "Ausschnitt"))
                 }
             })
+            .disabled(!isMovable)
             Button(String(localized: "Mitte")) {
                 vm.apply(String(localized: "Ausschnitt")) { set(&$0, 0) }
             }

@@ -161,11 +161,13 @@ public struct Style: Codable, Hashable, Sendable {
 
 extension Style {
     /// Start style for a new capture: `lastStyle` when `applyLastStyle` is on and one exists,
-    /// otherwise `.default`. `keepWindowShadow` always starts at its default, and an image
-    /// background falls back to the default background (a new capture has no image data).
+    /// otherwise `.default`. `keepWindowShadow` always starts at its default, `tilt` at zero (a tilted
+    /// start would lock the annotation tools), and an image background falls back to the default
+    /// background (a new capture has no image data).
     public static func forNewCapture(lastStyle: Style?, applyLastStyle: Bool) -> Style {
         guard applyLastStyle, var style = lastStyle else { return .default }
         style.keepWindowShadow = Style.default.keepWindowShadow
+        style.tilt = .zero
         if case .image = style.background { style.background = Style.default.background }
         return style
     }

@@ -320,6 +320,28 @@ struct DeviceRenderTests {
         #expect(abs(visible.width - width) < 1e-6 && visible.minY == 40 && visible.height == 200)
         #expect(abs(visible.minX - (50 + (300 - width) / 2 * 0.8)) < 1e-6)
 
+        // `.fit` (letterbox) with the same crop: the whole content is visible and maps through the bars.
+        var fitInput = input
+        fitInput.placement = TemplatePlacement(templateID: Self.phone.id, fit: .fit)
+        let fitMapping = try #require(CanvasMapping(input: fitInput, viewScale: viewScale))
+        #expect(fitMapping.visibleRect == crop)
+        for p in [CGPoint(x: 50, y: 40), CGPoint(x: 205, y: 145), CGPoint(x: 350, y: 240)] {
+            let back = fitMapping.toOriginal(fitMapping.toView(p))
+            #expect(abs(back.x - p.x) < 1e-6 && abs(back.y - p.y) < 1e-6, "fit \(p) → \(back)")
+        }
+        // `.fit` keeps the content width (300) across the screen width.
+        let fitDevice = try #require(Renderer.layout(for: fitInput).device)
+        let screenWidth = Self.phone.screenBounds.width * fitDevice.frameScale
+        #expect(abs(fitMapping.scale - viewScale * screenWidth / 300) < 1e-6)
+        let fitImage = try #require(Renderer.render(fitInput, outputScale: viewScale))
+        let fitMarker = fitMapping.toView(CGPoint(x: 205, y: 145))
+        #expect(Self.pixel(fitImage, at: fitMarker).isClose(to: Self.red, tolerance: 8),
+                "fit marker \(Self.pixel(fitImage, at: fitMarker))")
+        // 20 px above the crop lies in the (black) letterbox bar.
+        let bar = fitMapping.toView(CGPoint(x: 205, y: 20))
+        #expect(Self.pixel(fitImage, at: bar).isClose(to: RGBA(r: 0, g: 0, b: 0, a: 255), tolerance: 8),
+                "bar \(Self.pixel(fitImage, at: bar))")
+
         // Without template: the same as the plain layout mapping.
         let plainInput = RenderInput(original: original, crop: crop, style: Self.style(padding: 30))
         let plain = try #require(CanvasMapping(input: plainInput, viewScale: 0.5))
