@@ -53,6 +53,10 @@ final class EditorViewModel {
     private(set) var resolvedTemplate: DeviceTemplate?
     /// Rahmenbild von `resolvedTemplate`, wenn es eine eigene Vorlage ist.
     private(set) var customFrameImage: CGImage?
+    /// Bilddaten von `resolvedTemplate`, wenn es eine eigene Vorlage ist (`customFrameImage` ist daraus
+    /// dekodiert). Beim Sichern werden sie eingebettet, ohne den Vorlagenordner erneut zu lesen, auch wenn die
+    /// Datei dort inzwischen gelöscht wurde.
+    @ObservationIgnored private(set) var resolvedCustomFrameData: Data?
     /// Öffnet das Fenster zum Anlegen einer eigenen Vorlage; `nil` blendet „+ Eigene Vorlage …“ aus.
     var onCreateCustomTemplate: (@MainActor () -> Void)?
     var fileURL: URL?
@@ -113,6 +117,17 @@ final class EditorViewModel {
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
     /// Beobachtet `customTemplatesDidChange`; wird in `tearDown` entfernt.
     @ObservationIgnored private var templatesObserver: (any NSObjectProtocol)?
+    /// Eigene Vorlagen, die in dieser Sitzung samt Bild aufgelöst wurden. Ein Wechsel (auch per Undo) zurück
+    /// zu einer davon liest den Vorlagenordner nicht erneut; eigene Vorlagen ändern sich nie unter ihrer ID.
+    @ObservationIgnored private var sessionCustomTemplates: [String: ResolvedCustomTemplate] = [:]
+    /// `tearDown` lief schon (Fenster geschlossen): späte Änderungen aus der Oberfläche sind bedeutungslos.
+    @ObservationIgnored private(set) var isTornDown = false
+
+    private struct ResolvedCustomTemplate {
+        let template: DeviceTemplate
+        let frameData: Data?
+        let frameImage: CGImage?
+    }
 
     init(capture: Capture, style: Style, settings: @escaping () -> AppSettings) {
         let info = OriginalInfo(
@@ -250,31 +265,60 @@ final class EditorViewModel {
             enforceAnnotationLock()
         }
         guard let id = model.template?.templateID else {
-            resolvedTemplate = nil
-            customFrameImage = nil
+            setResolved(nil, frameData: nil, frameImage: nil)
             return
         }
         if let builtin = TemplateCatalog.builtin(id: id) {
-            resolvedTemplate = builtin
-            customFrameImage = nil
+            setResolved(builtin, frameData: nil, frameImage: nil)
             return
         }
-        let store = CustomTemplateStore.shared
-        if let loadedCustomTemplate, loadedCustomTemplate.id == id {
-            resolvedTemplate = loadedCustomTemplate
-            customFrameImage = loadedCustomFrameImage ?? store.image(for: loadedCustomTemplate)
-        } else if let template = store.template(id: id) {
-            resolvedTemplate = template
-            customFrameImage = store.image(for: template)
-        } else {
-            resolvedTemplate = nil
-            customFrameImage = nil
+        guard let custom = resolveCustomTemplate(id: id) else {
+            setResolved(nil, frameData: nil, frameImage: nil)
+            return
         }
+        setResolved(custom.template, frameData: custom.frameData, frameImage: custom.frameImage)
+    }
+
+    private func setResolved(_ template: DeviceTemplate?, frameData: Data?, frameImage: CGImage?) {
+        resolvedTemplate = template
+        resolvedCustomFrameData = frameData
+        customFrameImage = frameImage
+    }
+
+    /// Eigene Vorlage `id`: aus dieser Sitzung, aus dem geöffneten Paket, sonst aus dem Vorlagenordner
+    /// (die Bilddaten werden einmal gelesen und daraus dekodiert).
+    private func resolveCustomTemplate(id: String) -> ResolvedCustomTemplate? {
+        if let known = sessionCustomTemplates[id] { return known }
+        let store = CustomTemplateStore.shared
+        let resolved: ResolvedCustomTemplate
+        if let loadedCustomTemplate, loadedCustomTemplate.id == id {
+            let data = loadedCustomFrameData ?? store.imageData(for: loadedCustomTemplate)
+            resolved = ResolvedCustomTemplate(template: loadedCustomTemplate, frameData: data,
+                                              frameImage: loadedCustomFrameImage ?? data.flatMap(Self.decodeImage))
+        } else if let template = store.template(id: id) {
+            let data = store.imageData(for: template)
+            resolved = ResolvedCustomTemplate(template: template, frameData: data,
+                                              frameImage: data.flatMap(Self.decodeImage))
+        } else {
+            return nil
+        }
+        // Ohne Bild nicht merken: ein später angelegtes bzw. wiederhergestelltes Bild wird dann noch gefunden.
+        if resolved.frameData != nil { sessionCustomTemplates[id] = resolved }
+        return resolved
+    }
+
+    private static func decodeImage(_ data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
     /// Wechselt die Vorlage (ein Undo-Schritt); Einpassen, Füllfarbe, Ausschnitt und Adresse bleiben.
     /// `nil` heißt ohne Gerät.
     func selectTemplate(id: String?) {
+        // Ein offener Farbschritt (z. B. Füllfarbe) ist ein eigener, früherer Schritt, auch wenn der Aufruf
+        // nicht aus dem Inspektor kommt (Fenster „Eigene Vorlage anlegen“).
+        endTextEditing(commit: true)
+        flushPendingEdit()
         guard id != model.template?.templateID else { return }
         apply(String(localized: "Vorlage")) { model in
             guard let id else {
@@ -729,6 +773,7 @@ final class EditorViewModel {
 
     /// Beendet laufende Arbeit beim Schließen des Fensters.
     func tearDown() {
+        isTornDown = true
         renderTask?.cancel()
         renderTask = nil
         previewMaxPixelSize = nil

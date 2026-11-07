@@ -87,8 +87,8 @@ final class CustomTemplateCreator {
     }
 
     private static let logger = Logger(subsystem: "com.screenx.app", category: "templates")
-    /// Dateitypen, die das Fenster annimmt (Bilder wie der Vorlagenordner, dazu PDF).
-    static let acceptedExtensions = CustomTemplateStore.allowedImageExtensions.union(["pdf"])
+    /// Dateitypen, die das Fenster annimmt (Bilder wie der Vorlagenordner, dazu „tif“ und PDF).
+    static let acceptedExtensions = CustomTemplateStore.allowedImageExtensions.union(["tif", "pdf"])
 
     private(set) var loaded: LoadedImage?
     /// Ecken in Klickreihenfolge; höchstens vier, immer innerhalb des Bildes.
@@ -118,7 +118,8 @@ final class CustomTemplateCreator {
                 throw TemplateError.unsupportedImageType(url.pathExtension)
             }
             var data = try Data(contentsOf: url)
-            var fileExtension = ext
+            // Der Vorlagenordner kennt nur „tiff“; die Bytes sind dieselben.
+            var fileExtension = ext == "tif" ? "tiff" : ext
             if ext == "pdf" {
                 data = try TemplateImageImport.rasterizeFirstPage(pdfData: data, scale: 2)
                 fileExtension = "png"
@@ -152,13 +153,26 @@ final class CustomTemplateCreator {
         points = []
     }
 
+    /// Die Ecken, wie sie gesichert werden: im Uhrzeigersinn ab oben links, ein fast gerades Rechteck
+    /// (`QuadPicking.snappedToRectangle`) exakt achsenparallel. `nil` ohne Bild bzw. ohne vier Ecken.
+    var savedQuad: [CGPoint]? {
+        guard let loaded, points.count == 4 else { return nil }
+        return QuadPicking.snappedToRectangle(QuadPicking.orderedClockwise(points), imageSize: loaded.size)
+    }
+
+    /// Die vier Ecken ergeben ein gerades Rechteck: mit dieser Vorlage bleiben Anmerkungen bearbeitbar.
+    var isStraight: Bool {
+        guard let loaded, points.count == 4 else { return false }
+        return QuadPicking.isNearlyRectangular(QuadPicking.orderedClockwise(points), imageSize: loaded.size)
+    }
+
     /// Sichert die Vorlage im Vorlagenordner, meldet sie (`customTemplatesDidChange`), übergibt sie an
     /// `onSave` und schließt das Fenster. Fehler erscheinen als Hinweis.
     func save() {
-        guard canSave, let loaded else { return }
+        guard canSave, let loaded, let quad = savedQuad else { return }
         do {
             let template = try store.add(name: name, imageData: loaded.data, imageExtension: loaded.fileExtension,
-                                         quad: QuadPicking.orderedClockwise(points))
+                                         quad: quad)
             NotificationCenter.default.post(name: .customTemplatesDidChange, object: nil)
             onSave(template)
             close?()

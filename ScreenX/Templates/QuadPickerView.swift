@@ -24,7 +24,8 @@ struct QuadPickerView: View {
         }
         .frame(minWidth: 560, minHeight: 440)
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first else { return false }
+            // Nur Dateien (keine Web-Adressen aus dem Browser).
+            guard let url = urls.first, url.isFileURL else { return false }
             creator.load(url: url)
             return true
         } isTargeted: { isDropTargeted = $0 }
@@ -61,6 +62,13 @@ struct QuadPickerView: View {
             Button(String(localized: "Datei wählen …")) { creator.chooseFile() }
             Button(String(localized: "Zurücksetzen")) { creator.reset() }
                 .disabled(creator.points.isEmpty)
+            if creator.isStraight {
+                Label(String(localized: "Gerade erkannt – Anmerkungen bleiben bearbeitbar"),
+                      systemImage: "checkmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
             Spacer()
             TextField(String(localized: "Name"), text: $creator.name,
                       prompt: Text("Name der Vorlage"))

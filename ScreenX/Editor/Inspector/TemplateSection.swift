@@ -154,14 +154,23 @@ struct TemplateSection: View {
 
     // MARK: - Eigene Vorlagen
 
+    /// Die Vorlagen des Vorlagenordners, dazu die aus dem geöffneten Paket, wenn sie dort fehlt (nur
+    /// eingebettet), damit sie nach einem Wechsel wieder wählbar ist.
+    private var shownCustomTemplates: [DeviceTemplate] {
+        guard let embedded = vm.loadedCustomTemplate, !customTemplates.contains(where: { $0.id == embedded.id })
+        else { return customTemplates }
+        return customTemplates + [embedded]
+    }
+
     @ViewBuilder private var customGrid: some View {
-        if customTemplates.isEmpty {
+        let templates = shownCustomTemplates
+        if templates.isEmpty {
             Text("Noch keine eigenen Vorlagen.")
                 .foregroundStyle(.secondary)
         } else {
             LazyVGrid(columns: Self.customColumns, alignment: .leading, spacing: 10) {
-                ForEach(customTemplates) { template in
-                    TemplateThumbnail(title: template.name, image: TemplateThumbnailCache.image(for: template),
+                ForEach(templates) { template in
+                    TemplateThumbnail(title: template.name, image: thumbnail(for: template),
                                       symbolName: "photo", isSelected: currentID == template.id) {
                         select(template.id)
                     }
@@ -171,6 +180,12 @@ struct TemplateSection: View {
         if let create = vm.onCreateCustomTemplate {
             Button(String(localized: "+ Eigene Vorlage …")) { create() }
         }
+    }
+
+    /// Die eingebettete Vorlage hat ihr Bild aus dem Paket, alle anderen aus dem Vorlagenordner.
+    private func thumbnail(for template: DeviceTemplate) -> CGImage? {
+        let embedded = vm.loadedCustomTemplate?.id == template.id ? vm.loadedCustomFrameData : nil
+        return TemplateThumbnailCache.image(for: template, frameData: embedded)
     }
 
     private func reloadCustomTemplates() {
@@ -244,8 +259,13 @@ struct TemplateSection: View {
             .onSubmit { commitURL() }
             .onChange(of: urlFocused) { _, focused in if !focused { commitURL() } }
             .onAppear { urlDraft = vm.model.template?.urlText ?? "" }
-            // Reiterwechsel bzw. Schließen des Fensters: der Entwurf geht nicht verloren.
-            .onDisappear { commitURL() }
+            // Reiterwechsel: der Entwurf geht nicht verloren. Nach dem Schließen des Fensters ist er bedeutungslos;
+            // beim Wechsel der Vorlage übernimmt ihn `select` vorher (sonst landete er als später Schritt in der
+            // neuen Vorlage).
+            .onDisappear {
+                guard !vm.isTornDown, let template = vm.resolvedTemplate, Self.isBrowser(template) else { return }
+                commitURL()
+            }
             .onChange(of: vm.model.template?.urlText) { _, text in
                 if !urlFocused { urlDraft = text ?? "" }
             }
@@ -264,6 +284,7 @@ struct TemplateSection: View {
     /// Wechselt die Vorlage (ein Undo-Schritt); Einpassen, Füllfarbe, Ausschnitt und Adresse bleiben.
     private func select(_ id: String?) {
         guard id != currentID else { return }
+        if let template = vm.resolvedTemplate, Self.isBrowser(template) { commitURL() }
         colorEdit.finish(vm)
         vm.selectTemplate(id: id)
     }

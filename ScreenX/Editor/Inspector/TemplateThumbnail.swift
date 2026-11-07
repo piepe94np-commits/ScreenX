@@ -1,41 +1,44 @@
 import CoreGraphics
+import ImageIO
 import ScreenXCore
 import SwiftUI
 
-/// Kleine Vorschaubilder der Vorlagen (Rahmengrafik), höchstens `maxPixelSide` Pixel je Seite.
-/// Sie werden je Vorlage einmal erzeugt und aufbewahrt.
+/// Kleine Vorschaubilder der Vorlagen (Rahmengrafik). Sie werden je Vorlage einmal erzeugt und aufbewahrt,
+/// auch wenn keins entsteht (z. B. fehlendes Bild), damit die Liste das Bild nicht bei jedem Zeichnen liest.
 @MainActor
 enum TemplateThumbnailCache {
+    /// Mitgelieferte Vorlagen: längste Seite in Pixeln.
     static let maxPixelSide: CGFloat = 160
-    private static var images: [String: CGImage] = [:]
+    /// Eigene Vorlagen: längste Seite des von ImageIO erzeugten Vorschaubilds.
+    static let maxCustomPixelSide = 320
+    private static var images: [String: CGImage?] = [:]
 
-    /// Mitgelieferte Vorlagen werden als Vektorgrafik gezeichnet, eigene aus dem Vorlagenordner verkleinert.
-    static func image(for template: DeviceTemplate) -> CGImage? {
+    /// Mitgelieferte Vorlagen werden als Vektorgrafik gezeichnet, eigene als Vorschaubild ihrer Bilddatei
+    /// (`frameData`, sonst aus dem Vorlagenordner), ohne das ganze Bild zu dekodieren.
+    static func image(for template: DeviceTemplate, frameData: Data? = nil) -> CGImage? {
         if let cached = images[template.id] { return cached }
-        let longest = max(template.frameSize.width, template.frameSize.height)
-        guard longest > 0 else { return nil }
-        let scale = maxPixelSide / longest
         let image: CGImage?
         switch template.frame {
         case .builtin(let id):
-            image = DeviceArtwork.image(builtin: id, scale: scale, urlText: nil)
+            let longest = max(template.frameSize.width, template.frameSize.height)
+            image = longest > 0 ? DeviceArtwork.image(builtin: id, scale: maxPixelSide / longest, urlText: nil) : nil
         case .file:
-            image = CustomTemplateStore.shared.image(for: template).flatMap { downscaled($0, scale: scale) }
+            image = (frameData ?? CustomTemplateStore.shared.imageData(for: template)).flatMap(thumbnail)
         }
-        if let image { images[template.id] = image }
+        images[template.id] = .some(image) // also a miss (`nil` would remove the key)
         return image
     }
 
-    private static func downscaled(_ image: CGImage, scale: CGFloat) -> CGImage? {
-        let width = max(1, Int((CGFloat(image.width) * min(scale, 1)).rounded()))
-        let height = max(1, Int((CGFloat(image.height) * min(scale, 1)).rounded()))
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return nil }
-        ctx.interpolationQuality = .high
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return ctx.makeImage()
+    private static func thumbnail(_ data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxCustomPixelSide,
+            // Wie Vorlagenordner und Renderer: Pixel ohne EXIF-Ausrichtung.
+            kCGImageSourceCreateThumbnailWithTransform: false,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 }
 

@@ -210,6 +210,30 @@ struct DeviceRenderTests {
         #expect(corner.r > edge.r, "corner \(corner) vs bottom edge \(edge)")
     }
 
+    @Test func composeRejectsHugeOutput() throws {
+        let content = Self.solid(width: 40, height: 80, hex: "#2050FF")
+        let placement = TemplatePlacement(templateID: Self.phone.id)
+        func compose(_ scale: CGFloat) -> CGImage? {
+            DeviceCompositor.compose(content: content, template: Self.phone, placement: placement,
+                                     customFrame: nil, scale: scale)
+        }
+        #expect(compose(0.5) != nil)
+        let longest = max(Self.phone.frameSize.width, Self.phone.frameSize.height)
+        // One side above `maxOutputSide`, and an absurd scale that must not overflow `Int`.
+        #expect(compose(CGFloat(DeviceCompositor.maxOutputSide + 2) / longest) == nil)
+        #expect(compose(1e300) == nil)
+        // Both sides within the per-side cap but above the total pixel cap.
+        let square = DeviceTemplate(
+            id: "custom-square", name: "Square", frame: .file("square.png"),
+            frameSize: CGSize(width: 100, height: 100),
+            screenQuad: [CGPoint(x: 10, y: 10), CGPoint(x: 90, y: 10), CGPoint(x: 90, y: 90), CGPoint(x: 10, y: 90)],
+            screenCornerRadius: 0, preferredAspect: nil)
+        let side = (CGFloat(DeviceCompositor.maxOutputPixels).squareRoot() + 10).rounded(.up)
+        #expect(side <= CGFloat(DeviceCompositor.maxOutputSide))
+        #expect(DeviceCompositor.compose(content: content, template: square, placement: placement,
+                                         customFrame: nil, scale: side / 100) == nil)
+    }
+
     @Test func customFrameAndSkewedQuad() throws {
         // Custom 200×200 frame: grey with a transparent hole (50…150), and a skewed quad inside it.
         let frameCtx = Self.makeContext(width: 200, height: 200)

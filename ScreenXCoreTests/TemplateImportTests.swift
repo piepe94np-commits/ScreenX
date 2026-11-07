@@ -58,6 +58,53 @@ struct TemplateImportTests {
         #expect(QuadPicking.orderedClockwise([tr, tl]) == [tr, tl])
     }
 
+    @Test func simpleClockwiseClickOrderIsKept() {
+        // Concave quad clicked clockwise from the top-left: sorting by angle around the centroid would give
+        // a, d, b, c (crossing edges); the clicked order is a simple clockwise polygon and stays.
+        let a = CGPoint(x: 0, y: 0), b = CGPoint(x: 100, y: 0), c = CGPoint(x: 100, y: 100), d = CGPoint(x: 50, y: 20)
+        #expect(QuadPicking.orderedClockwise([a, b, c, d]) == [a, b, c, d])
+        // Same polygon, clicked starting elsewhere: kept, rotated to start top-left.
+        #expect(QuadPicking.orderedClockwise([c, d, a, b]) == [a, b, c, d])
+        // Counter-clockwise: re-sorted.
+        let tl = CGPoint(x: 10, y: 10), tr = CGPoint(x: 90, y: 12), br = CGPoint(x: 92, y: 80), bl = CGPoint(x: 8, y: 78)
+        #expect(QuadPicking.orderedClockwise([tl, bl, br, tr]) == [tl, tr, br, bl])
+        // Self-intersecting ("bow tie") clicks: re-sorted into the simple quad.
+        #expect(QuadPicking.orderedClockwise([tl, tr, bl, br]) == [tl, tr, br, bl])
+    }
+
+    @Test func nearRectangleSnapsAndSkewIsKept() {
+        let size = CGSize(width: 1000, height: 600)
+        // Hand-clicked, edges off by up to 4 px (< 1 % of the side): becomes the exact bounds.
+        let clicked = [CGPoint(x: 101.3, y: 50.2), CGPoint(x: 899.4, y: 53.9),
+                       CGPoint(x: 903.2, y: 550.7), CGPoint(x: 98.6, y: 547.1)]
+        let snapped = QuadPicking.snappedToRectangle(clicked, imageSize: size)
+        #expect(snapped == [CGPoint(x: 98.6, y: 50.2), CGPoint(x: 903.2, y: 50.2),
+                            CGPoint(x: 903.2, y: 550.7), CGPoint(x: 98.6, y: 550.7)])
+        let template = DeviceTemplate(id: "custom-x", name: "x", frame: .file("x.png"), frameSize: size,
+                                      screenQuad: snapped, screenCornerRadius: 0, preferredAspect: nil)
+        #expect(template.isRectangular)
+        #expect(QuadPicking.isNearlyRectangular(clicked, imageSize: size))
+
+        // Real perspective (top edge 40 px narrower on each side) and skew (left edge leans 30 px): unchanged.
+        let perspective = [CGPoint(x: 140, y: 50), CGPoint(x: 860, y: 50),
+                           CGPoint(x: 900, y: 550), CGPoint(x: 100, y: 550)]
+        #expect(QuadPicking.snappedToRectangle(perspective, imageSize: size) == perspective)
+        let skew = [CGPoint(x: 130, y: 50), CGPoint(x: 900, y: 50),
+                    CGPoint(x: 900, y: 550), CGPoint(x: 100, y: 550)]
+        #expect(QuadPicking.snappedToRectangle(skew, imageSize: size) == skew)
+        let tilted = [CGPoint(x: 100, y: 50), CGPoint(x: 900, y: 70),
+                      CGPoint(x: 900, y: 570), CGPoint(x: 100, y: 550)]
+        #expect(QuadPicking.snappedToRectangle(tilted, imageSize: size) == tilted)
+        // Not four points, or a degenerate (all equal) quad: unchanged.
+        let same = Array(repeating: CGPoint(x: 5, y: 5), count: 4)
+        #expect(QuadPicking.snappedToRectangle(same, imageSize: size) == same)
+        #expect(QuadPicking.snappedToRectangle(Array(clicked.prefix(3)), imageSize: size) == Array(clicked.prefix(3)))
+        // Points on the image edge stay inside after snapping.
+        let edge = [CGPoint(x: 0, y: 0), CGPoint(x: 1000, y: 2), CGPoint(x: 998, y: 600), CGPoint(x: 1, y: 599)]
+        #expect(QuadPicking.snappedToRectangle(edge, imageSize: size)
+                == [CGPoint(x: 0, y: 0), CGPoint(x: 1000, y: 0), CGPoint(x: 1000, y: 600), CGPoint(x: 0, y: 600)])
+    }
+
     /// A one-page PDF (`size` points) with a red square of 10 pt in its top-left corner, and a second page.
     private static func makePDF(size: CGSize) throws -> Data {
         let data = NSMutableData()

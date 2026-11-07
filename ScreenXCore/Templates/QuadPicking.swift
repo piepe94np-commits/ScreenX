@@ -48,14 +48,75 @@ public enum QuadPicking {
     }
 
     /// Four corners in the order a template needs: top-left, top-right, bottom-right, bottom-left
-    /// (clockwise on screen, y down), whatever order they were clicked in. Sorted by angle around their
-    /// centroid, starting at the corner with the smallest x + y. Other counts are returned unchanged.
+    /// (clockwise on screen, y down).
+    /// - If the points, in the order given, already form a simple clockwise polygon (positive signed area
+    ///   with y down, no crossing edges), that order is kept; it is only rotated to start at the corner with
+    ///   the smallest x + y. This keeps concave or strongly skewed quads as clicked.
+    /// - Otherwise they are sorted by angle around their centroid, starting at the corner with the smallest
+    ///   x + y (fixes a wrong click order).
+    /// Other counts are returned unchanged.
     public static func orderedClockwise(_ points: [CGPoint]) -> [CGPoint] {
         guard points.count == 4 else { return points }
-        let cx = points.map(\.x).reduce(0, +) / 4, cy = points.map(\.y).reduce(0, +) / 4
-        let sorted = points.sorted { atan2($0.y - cy, $0.x - cx) < atan2($1.y - cy, $1.x - cx) }
-        guard let start = sorted.indices.min(by: { sorted[$0].x + sorted[$0].y < sorted[$1].x + sorted[$1].y })
+        let cyclic: [CGPoint]
+        if isSimpleClockwise(points) {
+            cyclic = points
+        } else {
+            let cx = points.map(\.x).reduce(0, +) / 4, cy = points.map(\.y).reduce(0, +) / 4
+            cyclic = points.sorted { atan2($0.y - cy, $0.x - cx) < atan2($1.y - cy, $1.x - cx) }
+        }
+        guard let start = cyclic.indices.min(by: { cyclic[$0].x + cyclic[$0].y < cyclic[$1].x + cyclic[$1].y })
         else { return points }
-        return Array(sorted[start...] + sorted[..<start])
+        return Array(cyclic[start...] + cyclic[..<start])
+    }
+
+    /// Four points that form a simple polygon, clockwise on screen (y down): positive shoelace area and
+    /// neither pair of opposite edges crosses.
+    static func isSimpleClockwise(_ p: [CGPoint]) -> Bool {
+        guard p.count == 4 else { return false }
+        var area: CGFloat = 0
+        for i in 0..<4 {
+            let a = p[i], b = p[(i + 1) % 4]
+            area += a.x * b.y - b.x * a.y
+        }
+        guard area.isFinite, area > 0 else { return false }
+        return !segmentsCross(p[0], p[1], p[2], p[3]) && !segmentsCross(p[1], p[2], p[3], p[0])
+    }
+
+    /// Segments a–b and c–d intersect (touching counts).
+    private static func segmentsCross(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, _ d: CGPoint) -> Bool {
+        func cross(_ o: CGPoint, _ p: CGPoint, _ q: CGPoint) -> CGFloat {
+            (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x)
+        }
+        let d1 = cross(c, d, a), d2 = cross(c, d, b), d3 = cross(a, b, c), d4 = cross(a, b, d)
+        return d1 * d2 <= 0 && d3 * d4 <= 0
+    }
+
+    /// Relative tolerance of `snappedToRectangle`: edge deviation per frame side.
+    public static let straightTolerance: CGFloat = 0.01
+
+    /// An ordered quad (TL, TR, BR, BL) whose edges are axis-parallel within `straightTolerance` of the
+    /// respective image side: the top and bottom edges differ in y by at most 1 % of the height, the left and
+    /// right edges in x by at most 1 % of the width.
+    public static func isNearlyRectangular(_ quad: [CGPoint], imageSize: CGSize) -> Bool {
+        guard quad.count == 4, imageSize.width > 0, imageSize.height > 0,
+              quad.allSatisfy({ $0.x.isFinite && $0.y.isFinite })
+        else { return false }
+        let tx = imageSize.width * straightTolerance, ty = imageSize.height * straightTolerance
+        let q = quad
+        return abs(q[0].y - q[1].y) <= ty && abs(q[3].y - q[2].y) <= ty
+            && abs(q[0].x - q[3].x) <= tx && abs(q[1].x - q[2].x) <= tx
+            // Still the TL, TR, BR, BL arrangement (not a degenerate or mirrored quad).
+            && q[1].x > q[0].x && q[2].x > q[3].x && q[3].y > q[0].y && q[2].y > q[1].y
+    }
+
+    /// A hand-clicked quad that is nearly an axis-parallel rectangle (`isNearlyRectangular`) becomes exactly
+    /// its axis-aligned bounds (TL, TR, BR, BL, clamped to the image), so the template counts as rectangular
+    /// and annotations stay editable. A real skew or perspective is returned unchanged.
+    public static func snappedToRectangle(_ quad: [CGPoint], imageSize: CGSize) -> [CGPoint] {
+        guard isNearlyRectangular(quad, imageSize: imageSize) else { return quad }
+        let xs = quad.map(\.x), ys = quad.map(\.y)
+        let tl = clamped(CGPoint(x: xs.min()!, y: ys.min()!), to: imageSize)
+        let br = clamped(CGPoint(x: xs.max()!, y: ys.max()!), to: imageSize)
+        return [tl, CGPoint(x: br.x, y: tl.y), br, CGPoint(x: tl.x, y: br.y)]
     }
 }

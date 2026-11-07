@@ -23,6 +23,11 @@ public struct DeviceLayout: Equatable, Sendable {
 
 /// Places screen content into a device frame and applies the 3D tilt.
 public enum DeviceCompositor {
+    /// Largest composed device image per side, in pixels.
+    public static let maxOutputSide = 16384
+    /// Largest composed device image in total (about 200 MP, 800 MB at 4 bytes per pixel).
+    public static let maxOutputPixels = 200_000_000
+
     /// The layout `Renderer` uses for `contentSize` (the crop size).
     ///
     /// On the canvas, the device image lies at `CanvasLayout.compute(contentSize: imageSize, style:)
@@ -53,13 +58,18 @@ public enum DeviceCompositor {
     ///   screen through a perspective transform.
     /// - Frame: built-in vector artwork, or `customFrame` (scaled to the frame) for `.file` frames;
     ///   without `customFrame` only the screen is drawn.
-    /// Returns `nil` for an invalid scale or frame size, or if no context can be created.
+    /// Returns `nil` for an invalid scale or frame size, for an output larger than `maxOutputSide` per side
+    /// or `maxOutputPixels` in total, or if no context can be created.
     public static func compose(content: CGImage, template: DeviceTemplate, placement: TemplatePlacement,
                                customFrame: CGImage?, scale: CGFloat) -> CGImage? {
         let frame = template.frameSize
         guard scale.isFinite, scale > 0, frame.width > 0, frame.height > 0 else { return nil }
-        let width = max(1, Int((frame.width * scale).rounded()))
-        let height = max(1, Int((frame.height * scale).rounded()))
+        // Checked in floating point first: a huge product must not reach `Int(_:)`.
+        let w = max(1, (frame.width * scale).rounded()), h = max(1, (frame.height * scale).rounded())
+        guard w.isFinite, h.isFinite, w <= CGFloat(maxOutputSide), h <= CGFloat(maxOutputSide),
+              w * h <= CGFloat(maxOutputPixels)
+        else { return nil }
+        let width = Int(w), height = Int(h)
         guard let ctx = makeContext(width: width, height: height) else { return nil }
         // Exact pixels per frame unit on each axis (after rounding the output size).
         let sx = CGFloat(width) / frame.width, sy = CGFloat(height) / frame.height

@@ -106,18 +106,17 @@ extension EditorViewModel {
             customTemplate: custom.template, customFrameData: custom.frameData, to: url)
     }
 
-    /// Eigene Vorlage, die ins Paket kommt: die aus dem geöffneten Paket, sonst die aus dem Vorlagenordner.
+    /// Eigene Vorlage, die ins Paket kommt: die aufgelöste samt ihren schon gelesenen Bilddaten (aus dem
+    /// geöffneten Paket bzw. dem Vorlagenordner); der Vorlagenordner wird nur gefragt, wenn nichts aufgelöst ist.
     private func customTemplateForSaving() -> (template: DeviceTemplate?, frameData: Data?) {
         guard let id = model.template?.templateID, TemplateCatalog.builtin(id: id) == nil else { return (nil, nil) }
-        if let loadedCustomTemplate, loadedCustomTemplate.id == id, let loadedCustomFrameData {
-            return (loadedCustomTemplate, loadedCustomFrameData)
-        }
-        let store = CustomTemplateStore.shared
         let result: (template: DeviceTemplate?, frameData: Data?)
-        if let template = store.template(id: id) {
-            result = (template, store.imageData(for: template))
+        if let resolvedTemplate, resolvedTemplate.id == id {
+            result = (resolvedTemplate, resolvedCustomFrameData)
+        } else if let template = CustomTemplateStore.shared.template(id: id) {
+            result = (template, CustomTemplateStore.shared.imageData(for: template))
         } else {
-            result = (loadedCustomTemplate?.id == id ? loadedCustomTemplate : nil, nil)
+            result = (nil, nil)
         }
         if result.template != nil, result.frameData == nil {
             projectLogger.error("Custom template \(id, privacy: .public) is saved without its frame image")
