@@ -62,8 +62,9 @@ public enum GIFEncoder {
     /// replaced by a lossless PNG-backed image first (`compactFrame`); only the compressed frames stay in memory.
     /// The GIF is encoded in memory, then written under a hidden temporary name next to `destination` and
     /// moved into place, so nothing touches the disk before the encoding is complete.
-    /// `progress` gets 0…1 after each frame and 1.0 once the file is in place. On cancellation (checked per
-    /// frame) or any error the temporary file is removed and the error (`CancellationError` on cancel) is thrown.
+    /// `progress` gets 0…1 after each frame (the last frame reports nothing) and 1.0 once the file is in place.
+    /// On cancellation (checked per frame) or any error no file is left behind and the error is thrown
+    /// (`CancellationError` on cancel).
     public static func encode(
         source: URL, range: CMTimeRange?, options: GIFOptions, to destination: URL,
         progress: @Sendable (Double) -> Void
