@@ -361,9 +361,7 @@ private final class AudioNormalizer {
         guard frames > 0, let input = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frames) else {
             return nil
         }
-        guard CMSampleBufferCopyPCMDataIntoAudioBufferList(
-            sampleBuffer, at: 0, frameCount: Int32(frames), into: input.mutableAudioBufferList) == noErr
-        else { return nil }
+        guard Self.copyPCM(from: sampleBuffer, into: input) else { return nil }
         input.frameLength = frames
 
         let capacity = AVAudioFrameCount(
@@ -405,21 +403,53 @@ private final class AudioNormalizer {
         return AVAudioFormat(streamDescription: &asbd, channelLayout: discrete)
     }
 
+    /// Copies the sample buffer's PCM data (interleaved or one plane per channel) into `buffer`.
+    private static func copyPCM(from sampleBuffer: CMSampleBuffer, into buffer: AVAudioPCMBuffer) -> Bool {
+        var listSize = 0
+        guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer, bufferListSizeNeededOut: &listSize, bufferListOut: nil, bufferListSize: 0,
+            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil, flags: 0, blockBufferOut: nil) == noErr,
+            listSize > 0
+        else { return false }
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: listSize, alignment: 16)
+        defer { raw.deallocate() }
+        let listPointer = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
+        var blockBuffer: CMBlockBuffer?
+        guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer, bufferListSizeNeededOut: nil, bufferListOut: listPointer, bufferListSize: listSize,
+            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, blockBufferOut: &blockBuffer) == noErr
+        else { return false }
+        let source = UnsafeMutableAudioBufferListPointer(listPointer)
+        let destination = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+        guard source.count == destination.count else { return false }
+        for (from, to) in zip(source, destination) {
+            guard let fromData = from.mData, let toData = to.mData else { return false }
+            memcpy(toData, fromData, Int(min(from.mDataByteSize, to.mDataByteSize)))
+        }
+        return withExtendedLifetime(blockBuffer) { true }
+    }
+
+    /// Wraps interleaved PCM in a ready `CMSampleBuffer` starting at `time`.
     private static func sampleBuffer(from buffer: AVAudioPCMBuffer, at time: CMTime) -> CMSampleBuffer? {
+        let list = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+        guard list.count == 1, let data = list[0].mData else { return nil }
+        let byteCount = Int(buffer.frameLength * buffer.format.streamDescription.pointee.mBytesPerFrame)
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount,
+            blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+            dataLength: byteCount, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+            let block,
+            CMBlockBufferReplaceDataBytes(
+                with: data, blockBuffer: block, offsetIntoDestination: 0, dataLength: byteCount) == noErr
+        else { return nil }
         var sampleBuffer: CMSampleBuffer?
-        guard CMAudioSampleBufferCreateWithPacketDescriptions(
-            allocator: kCFAllocatorDefault, dataBuffer: nil, dataReady: false, makeDataReadyCallback: nil,
-            refcon: nil, formatDescription: buffer.format.formatDescription,
+        guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: buffer.format.formatDescription,
             sampleCount: CMItemCount(buffer.frameLength), presentationTimeStamp: time,
-            packetDescriptions: nil, sampleBufferOut: &sampleBuffer) == noErr,
-            let sampleBuffer
+            packetDescriptions: nil, sampleBufferOut: &sampleBuffer) == noErr
         else { return nil }
-        guard CMSampleBufferSetDataBufferFromAudioBufferList(
-            sampleBuffer, blockBufferAllocator: kCFAllocatorDefault,
-            blockBufferMemoryAllocator: kCFAllocatorDefault, flags: 0,
-            bufferList: buffer.audioBufferList) == noErr
-        else { return nil }
-        _ = CMSampleBufferSetDataReady(sampleBuffer)
         return sampleBuffer
     }
 }
