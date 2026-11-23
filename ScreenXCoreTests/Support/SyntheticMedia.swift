@@ -42,6 +42,19 @@ enum SyntheticMedia {
         }
     }
 
+    /// Full-resolution random BGR noise; a different `seed` gives a completely new picture (worst case).
+    static func noiseFrame(width: Int, height: Int, seed: UInt64) -> CVPixelBuffer {
+        var state = seed &* 0x9E37_79B9_7F4A_7C15 | 1
+        return pixelBuffer(width: width, height: height) { row, _ in
+            for x in 0..<width {
+                state ^= state << 13
+                state ^= state >> 7
+                state ^= state << 17
+                row[x] = UInt32(truncatingIfNeeded: state) | 0xFF00_0000
+            }
+        }
+    }
+
     /// Gray noise made of `block`×`block` cells, shifted left by `offset` pixels (a scrolling detailed screen).
     static func blockNoiseFrame(width: Int, height: Int, block: Int, offset: Int, seed: UInt64 = 1) -> CVPixelBuffer {
         pixelBuffer(width: width, height: height) { row, y in

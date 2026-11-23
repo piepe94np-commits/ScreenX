@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreGraphics
+import VideoToolbox
 
 /// Encoder settings for `VideoFileWriter`: one video track plus up to two AAC audio tracks.
 public struct VideoWriterSettings: Sendable, Equatable {
@@ -7,6 +8,8 @@ public struct VideoWriterSettings: Sendable, Equatable {
     public static let keyFrameIntervalSeconds: Double = 2
     /// Fragment interval of the `.mov`, so a crashed recording stays readable up to the last fragment.
     public static let fragmentIntervalSeconds: Double = 10
+    /// Hard upper bound for the video data rate, relative to the average bit rate (over windows of 1 s).
+    public static let peakBitrateFactor = 1.5
     public static let audioSampleRate = 48_000
     public static let audioChannels = 2
 
@@ -37,16 +40,24 @@ public struct VideoWriterSettings: Sendable, Equatable {
         )
     }
 
-    var videoOutputSettings: [String: Any] {
-        [
+    /// Peak limit in bytes per second for `kVTCompressionPropertyKey_DataRateLimits`.
+    var peakBytesPerSecond: Int { Int(Double(bitrate) * Self.peakBitrateFactor / 8) }
+
+    /// Video output settings; with `dataRateLimit` the encoder also gets a hard peak data rate.
+    func videoOutputSettings(dataRateLimit: Bool) -> [String: Any] {
+        var compression: [String: Any] = [
+            AVVideoAverageBitRateKey: bitrate,
+            AVVideoExpectedSourceFrameRateKey: fps,
+            AVVideoMaxKeyFrameIntervalDurationKey: Self.keyFrameIntervalSeconds,
+        ]
+        if dataRateLimit {
+            compression[kVTCompressionPropertyKey_DataRateLimits as String] = [peakBytesPerSecond, 1.0] as [Any]
+        }
+        return [
             AVVideoCodecKey: codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: bitrate,
-                AVVideoExpectedSourceFrameRateKey: fps,
-                AVVideoMaxKeyFrameIntervalDurationKey: Self.keyFrameIntervalSeconds,
-            ] as [String: Any],
+            AVVideoCompressionPropertiesKey: compression,
         ]
     }
 

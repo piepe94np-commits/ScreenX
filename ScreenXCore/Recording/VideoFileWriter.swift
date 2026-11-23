@@ -34,6 +34,8 @@ extension VideoWriterError: LocalizedError {
 public final class VideoFileWriter: @unchecked Sendable {
     public let url: URL
     public let settings: VideoWriterSettings
+    /// Whether the encoder accepted the peak data-rate limit (see `VideoWriterSettings.peakBitrateFactor`).
+    public let usesDataRateLimit: Bool
 
     private let queue = DispatchQueue(label: "com.screenx.app.video-writer")
     private let writer: AVAssetWriter
@@ -66,10 +68,18 @@ public final class VideoFileWriter: @unchecked Sendable {
             seconds: VideoWriterSettings.fragmentIntervalSeconds, preferredTimescale: 600)
         writer.shouldOptimizeForNetworkUse = false
 
-        let videoSettings = settings.videoOutputSettings
-        guard writer.canApply(outputSettings: videoSettings, forMediaType: .video) else {
-            throw VideoWriterError.cannotCreate
+        // Prefer a hard peak data rate so files never get much bigger than the estimate; fall back to the
+        // average bit rate alone if an encoder rejects the limit.
+        var videoSettings = settings.videoOutputSettings(dataRateLimit: true)
+        var usesDataRateLimit = true
+        if !writer.canApply(outputSettings: videoSettings, forMediaType: .video) {
+            videoSettings = settings.videoOutputSettings(dataRateLimit: false)
+            usesDataRateLimit = false
+            guard writer.canApply(outputSettings: videoSettings, forMediaType: .video) else {
+                throw VideoWriterError.cannotCreate
+            }
         }
+        self.usesDataRateLimit = usesDataRateLimit
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         videoInput.expectsMediaDataInRealTime = true
         guard writer.canAdd(videoInput) else { throw VideoWriterError.cannotCreate }

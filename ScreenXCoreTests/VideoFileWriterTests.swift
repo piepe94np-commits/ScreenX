@@ -155,8 +155,41 @@ struct VideoFileWriterTests {
 
         let estimateBytes = RecordingEstimate.megabytesPerMinute(profile: profile, source: size) * 1_000_000 / 6
         print("bitrateRoughlyRespected: \(writer.bytesWritten) bytes, estimate \(Int(estimateBytes)) bytes")
+        #expect(writer.usesDataRateLimit)
         #expect(writer.bytesWritten > 0)
         #expect(Double(writer.bytesWritten) <= 1.5 * estimateBytes)
+    }
+
+    /// Fresh full-resolution noise in every frame: the peak data-rate limit must keep the file near the estimate.
+    private func checkPeakRateCap(codec: VideoCodec) async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let profile = RecordingProfile(id: "t", name: "T", resolution: .original, fps: 30, quality: .medium,
+                                       codec: codec)
+        let size = CGSize(width: width, height: height)
+        let writer = try VideoFileWriter(url: url, settings: VideoWriterSettings(profile: profile, targetSize: size))
+        var seed: UInt64 = 1
+        await SyntheticMedia.record(writer, from: 0, to: 10, fps: 30) { _ in
+            seed += 1
+            return SyntheticMedia.noiseFrame(width: width, height: height, seed: seed)
+        }
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(10))
+
+        let estimateBytes = RecordingEstimate.megabytesPerMinute(profile: profile, source: size) * 1_000_000 / 6
+        let ratio = Double(writer.bytesWritten) / estimateBytes
+        print("peakRateCapsWorstCase \(codec): \(writer.bytesWritten) bytes, ratio \(ratio), "
+              + "limit \(writer.usesDataRateLimit), dropped \(writer.droppedBufferCount)")
+        #expect(writer.usesDataRateLimit)
+        #expect(ratio <= 2.0)
+    }
+
+    @Test func peakRateCapsWorstCase() async throws {
+        try await checkPeakRateCap(codec: .h264)
+    }
+
+    @Test(.enabled(if: SyntheticMedia.canEncodeHEVC, "kein HEVC-Encoder verfügbar"))
+    func peakRateCapsWorstCaseHEVC() async throws {
+        try await checkPeakRateCap(codec: .hevc)
     }
 
     @Test func finishWithoutFramesFails() async throws {
