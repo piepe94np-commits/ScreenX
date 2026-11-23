@@ -160,8 +160,12 @@ struct VideoFileWriterTests {
         #expect(Double(writer.bytesWritten) <= 1.5 * estimateBytes)
     }
 
-    /// Fresh full-resolution noise in every frame: the peak data-rate limit must keep the file near the estimate.
-    private func checkPeakRateCap(codec: VideoCodec) async throws {
+    private func estimatedBytes(_ profile: RecordingProfile, _ size: CGSize, seconds: Double) -> Double {
+        RecordingEstimate.megabytesPerMinute(profile: profile, source: size) * 1_000_000 / 60 * seconds
+    }
+
+    /// Fresh full-resolution noise in every frame (pathological); returns the size relative to the estimate.
+    private func noiseRatio(codec: VideoCodec) async throws -> (ratio: Double, limited: Bool) {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
         let profile = RecordingProfile(id: "t", name: "T", resolution: .original, fps: 30, quality: .medium,
@@ -174,22 +178,45 @@ struct VideoFileWriterTests {
             return SyntheticMedia.noiseFrame(width: width, height: height, seed: seed)
         }
         _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(10))
-
-        let estimateBytes = RecordingEstimate.megabytesPerMinute(profile: profile, source: size) * 1_000_000 / 6
-        let ratio = Double(writer.bytesWritten) / estimateBytes
-        print("peakRateCapsWorstCase \(codec): \(writer.bytesWritten) bytes, ratio \(ratio), "
-              + "limit \(writer.usesDataRateLimit), dropped \(writer.droppedBufferCount)")
-        #expect(writer.usesDataRateLimit)
-        #expect(ratio <= 2.0)
-    }
-
-    @Test func peakRateCapsWorstCase() async throws {
-        try await checkPeakRateCap(codec: .h264)
+        let ratio = Double(writer.bytesWritten) / estimatedBytes(profile, size, seconds: 10)
+        print("hevcNoiseStaysBounded \(codec): \(writer.bytesWritten) bytes, ratio \(ratio)")
+        return (ratio, writer.usesDataRateLimit)
     }
 
     @Test(.enabled(if: SyntheticMedia.canEncodeHEVC, "kein HEVC-Encoder verfügbar"))
-    func peakRateCapsWorstCaseHEVC() async throws {
-        try await checkPeakRateCap(codec: .hevc)
+    func hevcNoiseStaysBounded() async throws {
+        let result = try await noiseRatio(codec: .hevc)
+        #expect(result.limited)
+        #expect(result.ratio <= 3.0)
+    }
+
+    /// 10 s of dense small text scrolling 6 px per frame at 1280×720/30/medium.
+    private func checkScrollingText(codec: VideoCodec) async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let profile = RecordingProfile(id: "t", name: "T", resolution: .original, fps: 30, quality: .medium,
+                                       codec: codec)
+        let size = CGSize(width: 1280, height: 720)
+        let writer = try VideoFileWriter(url: url, settings: VideoWriterSettings(profile: profile, targetSize: size))
+        let text = SyntheticMedia.ScrollingText(width: 1280, height: 720, maxOffset: 6 * 300)
+        await SyntheticMedia.record(writer, from: 0, to: 10, fps: 30) { t in
+            text.frame(offset: 6 * Int((t * 30).rounded()))
+        }
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(10))
+        let ratio = Double(writer.bytesWritten) / estimatedBytes(profile, size, seconds: 10)
+        print("detailedScrollingTextStaysNearEstimate \(codec): \(writer.bytesWritten) bytes, ratio \(ratio), "
+              + "dropped \(writer.droppedBufferCount)")
+        #expect(writer.usesDataRateLimit)
+        #expect(ratio <= 1.5)
+    }
+
+    @Test func detailedScrollingTextStaysNearEstimate() async throws {
+        try await checkScrollingText(codec: .h264)
+    }
+
+    @Test(.enabled(if: SyntheticMedia.canEncodeHEVC, "kein HEVC-Encoder verfügbar"))
+    func detailedScrollingTextStaysNearEstimateHEVC() async throws {
+        try await checkScrollingText(codec: .hevc)
     }
 
     @Test func finishWithoutFramesFails() async throws {

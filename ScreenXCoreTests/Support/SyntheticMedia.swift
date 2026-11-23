@@ -55,6 +55,50 @@ enum SyntheticMedia {
         }
     }
 
+    /// A tall white page with dense rows of small black glyph-like rectangles (2–3 px tall, a row every
+    /// 12 px), generated once; `frame(offset:)` shows the window starting `offset` rows down (scrolling text).
+    struct ScrollingText {
+        let width: Int
+        let height: Int
+        private let pageHeight: Int
+        private let pixels: [UInt32]
+
+        init(width: Int, height: Int, maxOffset: Int, seed: UInt64 = 7) {
+            self.width = width
+            self.height = height
+            pageHeight = height + maxOffset
+            var page = [UInt32](repeating: 0xFFFF_FFFF, count: width * pageHeight)
+            var state = seed | 1
+            func next(_ range: ClosedRange<Int>) -> Int {
+                state ^= state << 13
+                state ^= state >> 7
+                state ^= state << 17
+                return range.lowerBound + Int(state % UInt64(range.count))
+            }
+            for top in stride(from: 4, to: pageHeight - 4, by: 12) {
+                var x = next(4...16)
+                while x < width - 4 {
+                    let glyphWidth = next(1...4)
+                    let glyphHeight = next(2...3)
+                    let yOffset = next(0...1)
+                    for y in (top + yOffset)..<(top + yOffset + glyphHeight) {
+                        for gx in x..<min(width, x + glyphWidth) { page[y * width + gx] = 0xFF00_0000 }
+                    }
+                    x += glyphWidth + (next(0...5) == 0 ? next(4...8) : next(1...2))
+                }
+            }
+            pixels = page
+        }
+
+        func frame(offset: Int) -> CVPixelBuffer {
+            pixelBuffer(width: width, height: height) { row, y in
+                pixels.withUnsafeBufferPointer { page in
+                    row.update(from: page.baseAddress! + (y + offset) * width, count: width)
+                }
+            }
+        }
+    }
+
     /// Gray noise made of `block`×`block` cells, shifted left by `offset` pixels (a scrolling detailed screen).
     static func blockNoiseFrame(width: Int, height: Int, block: Int, offset: Int, seed: UInt64 = 1) -> CVPixelBuffer {
         pixelBuffer(width: width, height: height) { row, y in
@@ -70,7 +114,7 @@ enum SyntheticMedia {
         }
     }
 
-    private static func pixelBuffer(
+    fileprivate static func pixelBuffer(
         width: Int, height: Int, fillRow: (UnsafeMutablePointer<UInt32>, Int) -> Void
     ) -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
