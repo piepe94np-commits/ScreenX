@@ -190,7 +190,8 @@ final class RecordingBarPanel {
 
     init(model: RecordingBarModel) {
         self.model = model
-        panel = BarPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+        // A non-zero placeholder size, so SwiftUI lays out and reports its real size even before `show`.
+        panel = BarPanel(contentRect: CGRect(x: 0, y: 0, width: 560, height: 72), styleMask: [.borderless, .nonactivatingPanel],
                          backing: .buffered, defer: false)
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -199,7 +200,6 @@ final class RecordingBarPanel {
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true
         panel.onReturn = { [weak model] in model?.onStart?() }
         panel.onEscape = { [weak model] in model?.onClose?() }
         let hosting = NSHostingView(rootView: RecordingBarView(model: model) { [weak self] size in
@@ -214,7 +214,9 @@ final class RecordingBarPanel {
 
     func show(on screen: NSScreen) {
         screenFrame = screen.visibleFrame
-        if let size = panel.contentView?.fittingSize { layout(size: size) }
+        // With empty sizing options the hosting view may report no fitting size; then keep the placeholder.
+        let fitted = panel.contentView?.fittingSize ?? .zero
+        layout(size: fitted.width > 0 && fitted.height > 0 ? fitted : panel.frame.size)
         panel.makeKeyAndOrderFront(nil)
     }
 

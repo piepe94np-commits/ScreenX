@@ -117,7 +117,7 @@ final class RecordingCoordinator {
 
     private func showBar() {
         guard phase == .idle else { return }
-        let screen = Self.screenUnderPointer()
+        let screen = Self.screenUnderPointer() ?? NSScreen.main
         let source = screen.map { CGSize(width: $0.frame.width * $0.backingScaleFactor,
                                          height: $0.frame.height * $0.backingScaleFactor) } ?? CGSize(width: 1920, height: 1080)
         let model = RecordingBarModel(link: link, sourceSize: source)
@@ -197,10 +197,6 @@ final class RecordingCoordinator {
             link.notify(String(localized: "Das Mikrofon ist nicht freigegeben. Die Aufnahme läuft ohne Mikrofon."))
         }
 
-        var updated = link.get()
-        updated.lastRecordingSetup = setup
-        link.set(updated)
-
         let seconds = settings.countdown.rawValue
         if mode == .area, let screen = Self.screen(containing: area) {
             let frame = RecordingFrameWindow(area: area, screenFrame: screen.frame)
@@ -236,6 +232,10 @@ final class RecordingCoordinator {
             report(error)
             return
         }
+        // Remembered only for a recording that actually started (not after Esc or a failed start).
+        var updated = link.get()
+        updated.lastRecordingSetup = setup
+        link.set(updated)
         let scale = Self.screen(containing: area)?.backingScaleFactor ?? 2
         let source = CGSize(width: area.width * scale, height: area.height * scale)
         run = Run(estimateMegabytesPerMinute: RecordingEstimate.megabytesPerMinute(profile: profile, source: source))
@@ -375,9 +375,7 @@ final class RecordingCoordinator {
     }
 
     static func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
+        bytes.formatted(.byteCount(style: .file).locale(Locale(identifier: "de_DE")))
     }
 
     // MARK: - Geometrie
