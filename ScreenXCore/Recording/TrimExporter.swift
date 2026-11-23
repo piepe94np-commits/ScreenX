@@ -44,6 +44,11 @@ public enum TrimExporter {
             guard !videoTracks.isEmpty else {
                 throw TrimExporterError.unreadable(String(localized: "Die Datei enthält kein Video."))
             }
+            let duration = try await asset.load(.duration)
+            let span = range.intersection(CMTimeRange(start: .zero, duration: duration))
+            guard span.duration.isValid, CMTimeCompare(span.duration, .zero) > 0 else {
+                throw TrimExporterError.unreadable(String(localized: "Der gewählte Bereich liegt außerhalb des Videos."))
+            }
         } catch let error as TrimExporterError {
             throw error
         } catch {
@@ -55,7 +60,6 @@ public enum TrimExporter {
         session.timeRange = range
 
         let temp = temporaryURL(for: destination, purpose: "trimming")
-        try? FileManager.default.removeItem(at: temp)
         do {
             try await session.export(to: temp, as: fileType)
             try FileManager.default.moveItem(at: temp, to: destination)
@@ -94,6 +98,6 @@ public enum TrimExporter {
     static func temporaryURL(for destination: URL, purpose: String) -> URL {
         destination.deletingLastPathComponent().appendingPathComponent(
             "." + destination.deletingPathExtension().lastPathComponent + "." + purpose + "."
-                + destination.pathExtension)
+                + UUID().uuidString.prefix(8) + "." + destination.pathExtension)
     }
 }

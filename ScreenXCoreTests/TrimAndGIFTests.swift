@@ -245,6 +245,23 @@ struct TrimAndGIFTests {
         #expect(try fileNames(in: directory) == [source.lastPathComponent])
     }
 
+    /// A range entirely after the end of the video is an error, not a GIF or cut of another part.
+    @Test func rangeOutsideVideoIsRejected() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try await recording(in: directory, seconds: 2)
+        let before = try fileNames(in: directory)
+
+        await #expect(throws: GIFEncoderError.self) {
+            try await GIFEncoder.encode(source: source, range: range(5, 7), options: GIFOptions(), to:
+                directory.appendingPathComponent("Clip.gif")) { _ in }
+        }
+        await #expect(throws: TrimExporterError.self) {
+            try await TrimExporter.export(source: source, range: range(5, 7), to: TrimExporter.trimmedURL(for: source))
+        }
+        #expect(try fileNames(in: directory) == before)
+    }
+
     /// Realistic content: scrolling dense text (SyntheticMedia.ScrollingText, 4 px per frame), recorded
     /// with the settings of the built-in GIF profile (480p, 10 fps, H.264 small), then a GIF at the video size.
     @Test func gifEstimateWithinFactor2() async throws {

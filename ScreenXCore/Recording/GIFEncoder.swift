@@ -92,6 +92,9 @@ public enum GIFEncoder {
         let fps = max(1, options.fps)
         let whole = CMTimeRange(start: .zero, duration: duration)
         let span = range.map { $0.intersection(whole) } ?? whole
+        guard span.duration.isValid, CMTimeCompare(span.duration, .zero) > 0 else {
+            throw GIFEncoderError.unreadable(String(localized: "Der gewählte Bereich liegt außerhalb des Videos."))
+        }
         let start = span.start.isValid ? span.start : .zero
         let seconds = span.duration.isValid ? max(0, span.duration.seconds) : 0
         // The small epsilon keeps 3.0 s × 10 fps at 30 frames despite rounding in CMTime seconds.
@@ -110,7 +113,6 @@ public enum GIFEncoder {
         }
 
         let temp = TrimExporter.temporaryURL(for: destination, purpose: "encoding")
-        try? FileManager.default.removeItem(at: temp)
         do {
             // A URL destination writes its own hidden helper file, which stays behind when the encoding is
             // cancelled before `CGImageDestinationFinalize`; a data destination never touches the disk.
@@ -137,6 +139,10 @@ public enum GIFEncoder {
                     } catch {
                         throw GIFEncoderError.frameFailed(error.localizedDescription)
                     }
+                    // Delays are matched by position, so the frame must be the one asked for at this position.
+                    guard index < count, CMTimeCompare(result.requestedTime, times[index]) == 0 else {
+                        throw GIFEncoderError.frameFailed(String(localized: "Unbekannter Fehler"))
+                    }
                     let image = try compactFrame(decoded)
                     let delay = delays[index]
                     CGImageDestinationAddImage(output, image, [
@@ -149,14 +155,15 @@ public enum GIFEncoder {
                     if index < count { progress(Double(index) / Double(count)) }
                 }
             }
+            // A cancelled generator may end its sequence early; report that as the cancellation it is.
+            try Task.checkCancellation()
             guard index == count else {
                 throw GIFEncoderError.frameFailed(String(localized: "Unbekannter Fehler"))
             }
-            try Task.checkCancellation()
             guard CGImageDestinationFinalize(output) else {
                 throw GIFEncoderError.writeFailed(String(localized: "Unbekannter Fehler"))
             }
-            try (data as Data).write(to: temp)
+            try data.write(to: temp, options: [])
             try FileManager.default.moveItem(at: temp, to: destination)
         } catch {
             try? FileManager.default.removeItem(at: temp)

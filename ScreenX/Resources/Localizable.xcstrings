@@ -285,6 +285,7 @@
     "Dieses Dateiformat wird beim Kürzen nicht unterstützt." : {},
     "Das Video konnte nicht gelesen werden: %@" : {},
     "Das gekürzte Video konnte nicht gespeichert werden: %@" : {},
+    "Der gewählte Bereich liegt außerhalb des Videos." : {},
     "Die Datei enthält kein Video." : {},
     "Ein Bild des Videos konnte nicht gelesen werden: %@" : {},
     "Das GIF konnte nicht gespeichert werden: %@" : {}
