@@ -8,7 +8,6 @@ import VideoToolbox
 /// host-time-like timestamps (recording time `t` maps to host time `baseSeconds + t`).
 enum SyntheticMedia {
     static let baseSeconds: Int64 = 1000
-    static let sampleRate = 48_000
     static let audioFrames = 1024
 
     /// Distinct colors (RGB); the frame color changes every second of recording time.
@@ -132,26 +131,47 @@ enum SyntheticMedia {
         return pb
     }
 
-    /// LPCM float32 48 kHz interleaved stereo sine (440 Hz), starting at sample `startSample` of recording time.
-    static func sineBuffer(startSample: Int64, frames: Int = audioFrames) -> CMSampleBuffer {
+    /// Linear PCM float32 layout of synthetic sine buffers.
+    struct SineFormat {
+        var sampleRate: Int = 48_000
+        var channels: Int = 2
+        var interleaved = true
+
+        static let stereo48k = SineFormat()
+        static let mono48k = SineFormat(channels: 1)
+        static let mono44k = SineFormat(sampleRate: 44_100, channels: 1)
+        static let planarStereo48k = SineFormat(interleaved: false)
+        /// Four channels and no channel layout.
+        static let quad48k = SineFormat(channels: 4)
+    }
+
+    /// Float32 sine (440 Hz) of `frames` frames starting at sample `startSample` of recording time,
+    /// in `format`, without a channel layout.
+    static func sineBuffer(startSample: Int64, frames: Int = audioFrames,
+                           format sine: SineFormat = .stereo48k) -> CMSampleBuffer {
+        let channels = sine.channels
+        let bytesPerFrame = UInt32(sine.interleaved ? 4 * channels : 4)
+        var flags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked
+        if !sine.interleaved { flags |= kAudioFormatFlagIsNonInterleaved }
         var asbd = AudioStreamBasicDescription(
-            mSampleRate: Double(sampleRate), mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8, mChannelsPerFrame: 2,
-            mBitsPerChannel: 32, mReserved: 0)
+            mSampleRate: Double(sine.sampleRate), mFormatID: kAudioFormatLinearPCM, mFormatFlags: flags,
+            mBytesPerPacket: bytesPerFrame, mFramesPerPacket: 1, mBytesPerFrame: bytesPerFrame,
+            mChannelsPerFrame: UInt32(channels), mBitsPerChannel: 32, mReserved: 0)
         var format: CMAudioFormatDescription?
         CMAudioFormatDescriptionCreate(
             allocator: kCFAllocatorDefault, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
             magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
 
-        var samples = [Float](repeating: 0, count: frames * 2)
+        // Interleaved: frame-major; non-interleaved: one plane per channel, back to back.
+        var samples = [Float](repeating: 0, count: frames * channels)
         for i in 0..<frames {
             let n = Double(startSample + Int64(i))
-            let v = Float(sin(2 * Double.pi * 440 * n / Double(sampleRate)) * 0.3)
-            samples[2 * i] = v
-            samples[2 * i + 1] = v
+            let v = Float(sin(2 * Double.pi * 440 * n / Double(sine.sampleRate)) * 0.3)
+            for c in 0..<channels {
+                samples[sine.interleaved ? i * channels + c : c * frames + i] = v
+            }
         }
-        let byteCount = frames * 8
+        let byteCount = samples.count * 4
         var block: CMBlockBuffer?
         CMBlockBufferCreateWithMemoryBlock(
             allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount,
@@ -161,7 +181,8 @@ enum SyntheticMedia {
             _ = CMBlockBufferReplaceDataBytes(
                 with: raw.baseAddress!, blockBuffer: block!, offsetIntoDestination: 0, dataLength: byteCount)
         }
-        let pts = CMTime(value: baseSeconds * Int64(sampleRate) + startSample, timescale: CMTimeScale(sampleRate))
+        let rate = Int64(sine.sampleRate)
+        let pts = CMTime(value: baseSeconds * rate + startSample, timescale: CMTimeScale(rate))
         var sampleBuffer: CMSampleBuffer?
         CMAudioSampleBufferCreateReadyWithPacketDescriptions(
             allocator: kCFAllocatorDefault, dataBuffer: block!, formatDescription: format!,
@@ -171,21 +192,25 @@ enum SyntheticMedia {
     }
 
     /// Feeds frames at `fps` for recording times `start..<end` and, interleaved in time order, sine
-    /// buffers for each audio track. Paced slightly so the real-time inputs keep up.
+    /// buffers for each audio track. With `audioPastEnd` the last audio buffer may cross `end` (it
+    /// straddles a following pause). Paced slightly so the real-time inputs keep up.
     static func record(
         _ writer: VideoFileWriter, from start: Double, to end: Double, fps: Int,
-        audio tracks: [AudioTrackKind] = [], frame: (Double) -> CVPixelBuffer
+        audio tracks: [AudioTrackKind] = [], audioFormat sine: SineFormat = .stereo48k,
+        audioPastEnd: Bool = false, frame: (Double) -> CVPixelBuffer
     ) async {
+        let rate = Double(sine.sampleRate)
         let frameCount = Int(((end - start) * Double(fps)).rounded())
-        var nextSample = Int64((start * Double(sampleRate)).rounded())
-        let lastSample = Int64((end * Double(sampleRate)).rounded())
+        var nextSample = Int64((start * rate).rounded())
+        let lastSample = Int64((end * rate).rounded())
         for i in 0..<frameCount {
             let t = start + Double(i) / Double(fps)
             writer.appendVideo(frame(t), hostTime: hostTime(t))
-            let frameEndSample = Int64(((t + 1 / Double(fps)) * Double(sampleRate)).rounded())
-            while !tracks.isEmpty, nextSample < frameEndSample, nextSample + Int64(audioFrames) <= lastSample {
+            let frameEndSample = Int64(((t + 1 / Double(fps)) * rate).rounded())
+            while !tracks.isEmpty, nextSample < frameEndSample,
+                  audioPastEnd ? nextSample < lastSample : nextSample + Int64(audioFrames) <= lastSample {
                 for track in tracks {
-                    writer.appendAudio(sineBuffer(startSample: nextSample), track: track)
+                    writer.appendAudio(sineBuffer(startSample: nextSample, format: sine), track: track)
                 }
                 nextSample += Int64(audioFrames)
             }

@@ -275,7 +275,8 @@
     "Die Videodatei konnte nicht angelegt werden." : {},
     "Das Video konnte nicht geschrieben werden: %@" : {},
     "Es wurden keine Bilder aufgenommen." : {},
-    "Unbekannter Fehler" : {}
+    "Unbekannter Fehler" : {},
+    "Die Aufnahme wurde bereits beendet." : {}
   },
   "version" : "1.0"
 }

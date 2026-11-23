@@ -21,6 +21,24 @@ struct VideoFileWriterTests {
         try await track.load(.formatDescriptions).first.map { CMFormatDescriptionGetMediaSubType($0) }
     }
 
+    private func expectNoDrops(_ writer: VideoFileWriter, sourceLocation: SourceLocation = #_sourceLocation) {
+        #expect(writer.droppedVideoFrames == 0, sourceLocation: sourceLocation)
+        #expect(writer.droppedAudioBuffers == 0, sourceLocation: sourceLocation)
+    }
+
+    /// The track is AAC at 48 kHz stereo and lasts about `duration` seconds.
+    private func expectNormalizedAAC(_ track: AVAssetTrack, duration: Double,
+                                     sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        let description = try #require(try await track.load(.formatDescriptions).first)
+        #expect(CMFormatDescriptionGetMediaSubType(description) == kAudioFormatMPEG4AAC,
+                sourceLocation: sourceLocation)
+        let asbd = try #require(CMAudioFormatDescriptionGetStreamBasicDescription(description)).pointee
+        #expect(asbd.mSampleRate == 48_000, sourceLocation: sourceLocation)
+        #expect(asbd.mChannelsPerFrame == 2, sourceLocation: sourceLocation)
+        let trackDuration = try await track.load(.timeRange).duration.seconds
+        #expect(abs(trackDuration - duration) <= 0.1, sourceLocation: sourceLocation)
+    }
+
     private func checkPlayableMov(codec: VideoCodec, expectedSubtype: FourCharCode) async throws {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -38,10 +56,14 @@ struct VideoFileWriterTests {
         #expect(size == CGSize(width: width, height: height))
         let videoSubtype = try await subtype(of: video[0])
         #expect(videoSubtype == expectedSubtype)
+        let videoDescription = try #require(try await video[0].load(.formatDescriptions).first)
+        let primaries = CMFormatDescriptionGetExtension(
+            videoDescription, extensionKey: kCMFormatDescriptionExtension_ColorPrimaries) as? String
+        #expect(primaries == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String)
         let audio = try await asset.loadTracks(withMediaType: .audio)
         try #require(audio.count == 1)
-        let audioSubtype = try await subtype(of: audio[0])
-        #expect(audioSubtype == kAudioFormatMPEG4AAC)
+        try await expectNormalizedAAC(audio[0], duration: 3)
+        expectNoDrops(writer)
     }
 
     /// Index of the palette color closest to the center pixel of the frame at `seconds`.
@@ -104,6 +126,67 @@ struct VideoFileWriterTests {
         #expect(before == SyntheticMedia.colorIndex(at: 1.5))
         let after = try await paletteIndex(of: asset, at: 2.5)
         #expect(after == SyntheticMedia.colorIndex(at: 7.5))
+        expectNoDrops(writer)
+    }
+
+    @Test func audioStraddlingPauseStartIsKept() async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: 1))
+        let frames = SyntheticMedia.solidRecording(width: width, height: height)
+        // The last buffer before the pause runs about 5 ms past the pause start.
+        await SyntheticMedia.record(writer, from: 0, to: 2, fps: 30, audio: [.system], audioPastEnd: true,
+                                    frame: frames)
+        writer.pause(at: SyntheticMedia.hostTime(2))
+        writer.resume(at: SyntheticMedia.hostTime(7))
+        await SyntheticMedia.record(writer, from: 7, to: 9, fps: 30, audio: [.system], frame: frames)
+        let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(9))
+
+        let audio = try await AVURLAsset(url: out).loadTracks(withMediaType: .audio)
+        try #require(audio.count == 1)
+        try await expectNormalizedAAC(audio[0], duration: 4)
+        expectNoDrops(writer)
+        #expect(writer.failure == nil)
+    }
+
+    static let realAudioFormats: [String: SyntheticMedia.SineFormat] = [
+        "mono48k": .mono48k, "mono44k": .mono44k, "planarStereo48k": .planarStereo48k, "quad48k": .quad48k,
+    ]
+
+    @Test(arguments: ["mono48k", "mono44k", "planarStereo48k", "quad48k"])
+    func realAudioFormatsAreNormalized(_ name: String) async throws {
+        let format = try #require(Self.realAudioFormats[name])
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: 2))
+        await SyntheticMedia.record(writer, from: 0, to: 2, fps: 30, audio: [.microphone], audioFormat: format,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(2))
+
+        let audio = try await AVURLAsset(url: out).loadTracks(withMediaType: .audio)
+        let withData = try await audio.asyncFilter { try await $0.load(.timeRange).duration.seconds > 0 }
+        try #require(withData.count == 1)
+        try await expectNormalizedAAC(withData[0], duration: 2)
+        expectNoDrops(writer)
+        #expect(writer.failure == nil)
+    }
+
+    @Test func audioFormatChangeMidStream() async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: 1))
+        let frames = SyntheticMedia.solidRecording(width: width, height: height)
+        await SyntheticMedia.record(writer, from: 0, to: 1, fps: 30, audio: [.microphone],
+                                    audioFormat: .stereo48k, audioPastEnd: true, frame: frames)
+        await SyntheticMedia.record(writer, from: 1, to: 2, fps: 30, audio: [.microphone],
+                                    audioFormat: .mono44k, frame: frames)
+        let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(2))
+
+        let audio = try await AVURLAsset(url: out).loadTracks(withMediaType: .audio)
+        try #require(audio.count == 1)
+        try await expectNormalizedAAC(audio[0], duration: 2)
+        expectNoDrops(writer)
+        #expect(writer.failure == nil)
     }
 
     @Test func lastFrameHeldUntilStop() async throws {
@@ -121,6 +204,7 @@ struct VideoFileWriterTests {
         try #require(video.count == 1)
         let trackDuration = try await video[0].load(.timeRange).duration.seconds
         #expect(abs(trackDuration - 4) <= 0.1)
+        expectNoDrops(writer)
     }
 
     @Test func twoAudioTracks() async throws {
@@ -137,6 +221,7 @@ struct VideoFileWriterTests {
             let trackDuration = try await track.load(.timeRange).duration.seconds
             #expect(trackDuration > 1.5)
         }
+        expectNoDrops(writer)
     }
 
     @Test func bitrateRoughlyRespected() async throws {
@@ -205,7 +290,7 @@ struct VideoFileWriterTests {
         _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(10))
         let ratio = Double(writer.bytesWritten) / estimatedBytes(profile, size, seconds: 10)
         print("detailedScrollingTextStaysNearEstimate \(codec): \(writer.bytesWritten) bytes, ratio \(ratio), "
-              + "dropped \(writer.droppedBufferCount)")
+              + "dropped \(writer.droppedVideoFrames)")
         #expect(writer.usesDataRateLimit)
         #expect(ratio <= 1.5)
     }
@@ -219,6 +304,23 @@ struct VideoFileWriterTests {
         try await checkScrollingText(codec: .hevc)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func failureIsRecordedAndReported() async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: 0))
+        #expect(writer.failure == nil)
+        // Finishing without any frame cancels the writer: a reliable failure.
+        let reported = await withCheckedContinuation { (continuation: CheckedContinuation<VideoWriterError, Never>) in
+            writer.onFailure = { continuation.resume(returning: $0) }
+            Task { _ = try? await writer.finish(stopAt: SyntheticMedia.hostTime(1)) }
+        }
+        #expect(writer.failure == reported)
+        await #expect(throws: VideoWriterError.self) {
+            _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(1))
+        }
+    }
+
     @Test func finishWithoutFramesFails() async throws {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -226,5 +328,13 @@ struct VideoFileWriterTests {
         await #expect(throws: VideoWriterError.self) {
             _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(1))
         }
+    }
+}
+
+private extension Array {
+    func asyncFilter(_ isIncluded: (Element) async throws -> Bool) async rethrows -> [Element] {
+        var result: [Element] = []
+        for element in self where try await isIncluded(element) { result.append(element) }
+        return result
     }
 }

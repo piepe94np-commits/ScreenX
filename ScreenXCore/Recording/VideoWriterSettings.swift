@@ -58,7 +58,19 @@ public struct VideoWriterSettings: Sendable, Equatable {
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
             AVVideoCompressionPropertiesKey: compression,
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+            ],
         ]
+    }
+
+    /// Format every audio buffer is converted to before it reaches the AAC encoder.
+    static func normalizedAudioFormat() -> AVAudioFormat {
+        AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: Double(audioSampleRate),
+            channels: AVAudioChannelCount(audioChannels), interleaved: true)!
     }
 
     var audioOutputSettings: [String: Any] {
