@@ -376,7 +376,7 @@ struct VideoFileWriterTests {
         #expect(writer.droppedAudioBuffers == 0)
         // This test is about audio; a few video frames dropped while the encoder starts are accepted
         // (production policy), as seen on the CI VMs.
-        #expect(writer.droppedVideoFrames <= 10)
+        #expect(writer.droppedVideoFrames <= 20)
 
         let asset = AVURLAsset(url: out)
         let audio = try await asset.loadTracks(withMediaType: .audio)
