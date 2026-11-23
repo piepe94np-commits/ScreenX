@@ -201,7 +201,7 @@ enum SyntheticMedia {
         _ writer: VideoFileWriter, from start: Double, to end: Double, fps: Int,
         audio tracks: [AudioTrackKind] = [], audioFormat sine: SineFormat = .stereo48k,
         audioPastEnd: Bool = false, audioDriftPPM: Double = 0, audioStall: Range<Double>? = nil,
-        frameDelay: Duration = .milliseconds(3),
+        frameDelay: Duration = .milliseconds(8),
         frame: (Double) -> CVPixelBuffer
     ) async {
         let rate = Double(sine.sampleRate)
@@ -223,7 +223,8 @@ enum SyntheticMedia {
                 }
                 nextSample += Int64(audioFrames)
             }
-            // Frames come about ten times faster than real time; give the encoder time to spin up first.
+            // Frames come about four times faster than real time (faster pacing made the CI VM's software
+            // encoder drop frames at random); give the encoder time to spin up first.
             try? await Task.sleep(for: i == 0 ? .milliseconds(200) : frameDelay)
         }
     }
