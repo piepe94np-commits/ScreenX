@@ -114,6 +114,28 @@ public struct AppSettings: Codable, Sendable, Equatable {
         lastRecordingSetup = (try? c.decodeIfPresent(RecordingSetup.self, forKey: .lastRecordingSetup)) ?? nil
     }
 
+    /// Explicit encoding so a cleared `videoHotkey` is stored as `null` (the synthesized encoder
+    /// would omit the key, which decoding reads as "use the default").
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(hotkeys, forKey: .hotkeys)
+        try c.encode(afterCapture, forKey: .afterCapture)
+        try c.encode(quickAccessDuration, forKey: .quickAccessDuration)
+        try c.encode(saveDirectory, forKey: .saveDirectory)
+        try c.encode(exportFormat, forKey: .exportFormat)
+        try c.encode(jpegQuality, forKey: .jpegQuality)
+        try c.encode(windowShadow, forKey: .windowShadow)
+        try c.encode(exportScale, forKey: .exportScale)
+        try c.encode(applyLastStyle, forKey: .applyLastStyle)
+        try c.encode(videoHotkey, forKey: .videoHotkey)
+        try c.encode(recordingProfiles, forKey: .recordingProfiles)
+        try c.encode(defaultProfileID, forKey: .defaultProfileID)
+        try c.encode(countdown, forKey: .countdown)
+        try c.encode(hideNotifications, forKey: .hideNotifications)
+        try c.encodeIfPresent(microphoneDeviceID, forKey: .microphoneDeviceID)
+        try c.encodeIfPresent(lastRecordingSetup, forKey: .lastRecordingSetup)
+    }
+
     /// Decodes one profile, turning an unreadable element into `nil` instead of failing the list.
     private struct LossyProfile: Decodable {
         let value: RecordingProfile?
