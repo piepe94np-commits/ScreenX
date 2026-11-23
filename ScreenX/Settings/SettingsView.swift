@@ -2,17 +2,41 @@ import AppKit
 import ScreenXCore
 import SwiftUI
 
+/// Reiter des Einstellungsfensters.
+enum SettingsTab: Hashable {
+    case general, video
+}
+
+/// Gewählter Reiter, auch von außen setzbar: Vor `showSettings()` z. B.
+/// `SettingsNavigation.shared.tab = .video` öffnet die Einstellungen im Reiter „Video“.
+@MainActor
+@Observable
+final class SettingsNavigation {
+    static let shared = SettingsNavigation()
+    var tab: SettingsTab = .general
+}
+
 /// Einstellungsfenster (SwiftUI `Settings`-Scene).
 struct SettingsView: View {
-    let coordinator: AppCoordinator
+    @Bindable var coordinator: AppCoordinator
 
     var body: some View {
-        TabView {
-            Tab(String(localized: "Allgemein"), systemImage: "gearshape") {
+        TabView(selection: Bindable(SettingsNavigation.shared).tab) {
+            Tab(String(localized: "Allgemein"), systemImage: "gearshape", value: SettingsTab.general) {
                 GeneralSettingsView(coordinator: coordinator)
+                    .frame(width: 520)
+            }
+            Tab(String(localized: "Video"), systemImage: "video", value: SettingsTab.video) {
+                VideoSettingsView(coordinator: coordinator)
+                    .frame(width: 760, height: 560)
             }
         }
-        .frame(width: 520)
+        // Ein Screenshot-Kürzel, das dem Video-Kürzel gleicht, nimmt es diesem weg (wie zwischen den Modi).
+        .onChange(of: coordinator.settings.hotkeys) { _, hotkeys in
+            if let video = coordinator.settings.videoHotkey, hotkeys.values.contains(video) {
+                coordinator.settings.videoHotkey = nil
+            }
+        }
     }
 }
 
