@@ -146,11 +146,10 @@ struct VideoFileWriterTests {
                                        codec: .h264)
         let size = CGSize(width: width, height: height)
         let writer = try VideoFileWriter(url: url, settings: VideoWriterSettings(profile: profile, targetSize: size))
-        // Gray noise of 3×3 cells scrolling 3 px per frame: a detailed, constantly moving screen that is far
-        // larger without the bit rate setting. Full-resolution noise cannot reach this bit rate at all: its
-        // keyframes (every 2 s) alone exceed the budget.
+        // Gray noise of 4×4 cells scrolling 4 px per frame: a detailed, constantly moving screen. Finer noise
+        // cannot reach this bit rate at all: with a keyframe every 2 s, its keyframes alone exceed the budget.
         await SyntheticMedia.record(writer, from: 0, to: 10, fps: 30) { t in
-            SyntheticMedia.blockNoiseFrame(width: width, height: height, block: 3, offset: Int((t * 90).rounded()))
+            SyntheticMedia.blockNoiseFrame(width: width, height: height, block: 4, offset: Int((t * 120).rounded()))
         }
         _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(10))
 
