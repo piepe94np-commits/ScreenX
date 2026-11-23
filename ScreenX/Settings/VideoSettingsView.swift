@@ -296,7 +296,9 @@ struct VideoHotkeyRecorderView: View {
                     if recorder.isRecording {
                         recorder.stop()
                     } else {
-                        recorder.start { setHotkey($0) }
+                        coordinator.suspendHotkeysForVideoRecorder()
+                        recorder.start(onCombo: { setHotkey($0) },
+                                       onEnd: { coordinator.resumeHotkeysAfterVideoRecorder() })
                     }
                 } label: {
                     Text(label(for: combo))
@@ -348,10 +350,12 @@ final class VideoHotkeyRecorder {
     private(set) var isRecording = false
     @ObservationIgnored private var monitor: Any?
     @ObservationIgnored private var resignObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var onEnd: (() -> Void)?
 
-    func start(onCombo: @escaping (KeyCombo) -> Void) {
+    func start(onCombo: @escaping (KeyCombo) -> Void, onEnd: @escaping () -> Void) {
         stop()
         isRecording = true
+        self.onEnd = onEnd
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handle(event, onCombo: onCombo)
             return nil
@@ -373,6 +377,9 @@ final class VideoHotkeyRecorder {
             self.resignObserver = nil
         }
         isRecording = false
+        let end = onEnd
+        onEnd = nil
+        end?()
     }
 
     private func handle(_ event: NSEvent, onCombo: (KeyCombo) -> Void) {

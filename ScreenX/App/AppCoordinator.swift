@@ -247,8 +247,24 @@ final class AppCoordinator {
         return result
     }
 
+    /// The Video settings tab records its hotkey itself; meanwhile the global hotkeys are off, so the
+    /// current combos (⌥⇧3/4/5/6) can be recorded instead of triggering their action.
+    private var isRecordingVideoHotkey = false
+
+    func suspendHotkeysForVideoRecorder() {
+        stopRecording()
+        isRecordingVideoHotkey = true
+        hotkeyCenter?.unregisterAll()
+    }
+
+    func resumeHotkeysAfterVideoRecorder() {
+        guard isRecordingVideoHotkey else { return }
+        isRecordingVideoHotkey = false
+        registerHotkeys()
+    }
+
     private func registerHotkeys() {
-        guard recordingMode == nil, let hotkeyCenter else { return }
+        guard recordingMode == nil, !isRecordingVideoHotkey, let hotkeyCenter else { return }
         let result = hotkeyCenter.register(settings.hotkeys, video: settings.videoHotkey)
         hotkeyErrors = result.modes
         videoHotkeyError = result.video
