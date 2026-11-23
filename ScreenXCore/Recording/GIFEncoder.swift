@@ -56,8 +56,12 @@ public enum GIFEncoder {
     static let batchSize = 10
 
     /// Samples `range` (or the whole video) at `options.fps`, starting at the range start, with
-    /// floor(duration × fps) frames (at least 1). Each frame is fetched and added on its own; the GIF is
-    /// written under a hidden temporary name next to `destination` and moved into place when complete.
+    /// floor(duration × fps) frames (at least 1). Each frame is fetched and added on its own.
+    ///
+    /// Memory: `CGImageDestination` keeps every added image until it is finalized, so each decoded frame is
+    /// replaced by a lossless PNG-backed image first (`compactFrame`); only the compressed frames stay in memory.
+    /// The GIF is encoded in memory, then written under a hidden temporary name next to `destination` and
+    /// moved into place, so nothing touches the disk before the encoding is complete.
     /// `progress` gets 0…1 after each frame and 1.0 once the file is in place. On cancellation (checked per
     /// frame) or any error the temporary file is removed and the error (`CancellationError` on cancel) is thrown.
     public static func encode(
@@ -107,8 +111,11 @@ public enum GIFEncoder {
         let temp = TrimExporter.temporaryURL(for: destination, purpose: "encoding")
         try? FileManager.default.removeItem(at: temp)
         do {
-            guard let output = CGImageDestinationCreateWithURL(
-                temp as CFURL, UTType.gif.identifier as CFString, count, nil)
+            // A URL destination writes its own hidden helper file, which stays behind when the encoding is
+            // cancelled before `CGImageDestinationFinalize`; a data destination never touches the disk.
+            let data = NSMutableData()
+            guard let output = CGImageDestinationCreateWithData(
+                data as CFMutableData, UTType.gif.identifier as CFString, count, nil)
             else {
                 throw GIFEncoderError.writeFailed(String(localized: "Unbekannter Fehler"))
             }
@@ -123,12 +130,13 @@ public enum GIFEncoder {
                 let batch = Array(times[batchStart..<min(count, batchStart + batchSize)])
                 for await result in generator.images(for: batch) {
                     try Task.checkCancellation()
-                    let image: CGImage
+                    let decoded: CGImage
                     do {
-                        image = try result.image
+                        decoded = try result.image
                     } catch {
                         throw GIFEncoderError.frameFailed(error.localizedDescription)
                     }
+                    let image = try compactFrame(decoded)
                     let delay = delays[index]
                     CGImageDestinationAddImage(output, image, [
                         kCGImagePropertyGIFDictionary: [
@@ -147,6 +155,7 @@ public enum GIFEncoder {
             guard CGImageDestinationFinalize(output) else {
                 throw GIFEncoderError.writeFailed(String(localized: "Unbekannter Fehler"))
             }
+            try (data as Data).write(to: temp)
             try FileManager.default.moveItem(at: temp, to: destination)
         } catch {
             try? FileManager.default.removeItem(at: temp)
@@ -155,6 +164,21 @@ public enum GIFEncoder {
             throw GIFEncoderError.writeFailed(error.localizedDescription)
         }
         progress(1.0)
+    }
+
+    /// The same picture as `image`, backed by lossless PNG data that is decoded only when ImageIO reads it,
+    /// so an image the GIF destination holds on to costs the compressed size instead of the full bitmap.
+    static func compactFrame(_ image: CGImage) throws -> CGImage {
+        let data = NSMutableData()
+        let noCache = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let png = CGImageDestinationCreateWithData(data as CFMutableData, UTType.png.identifier as CFString, 1, nil)
+        else { throw GIFEncoderError.frameFailed(String(localized: "Unbekannter Fehler")) }
+        CGImageDestinationAddImage(png, image, nil)
+        guard CGImageDestinationFinalize(png),
+              let source = CGImageSourceCreateWithData(data as CFData, noCache),
+              let compact = CGImageSourceCreateImageAtIndex(source, 0, noCache)
+        else { throw GIFEncoderError.frameFailed(String(localized: "Unbekannter Fehler")) }
+        return compact
     }
 
     /// Delays for `count` frames at `fps`, in GIF units of 1/100 s. Each delay is rounded so the running sum

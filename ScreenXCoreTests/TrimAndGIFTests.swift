@@ -4,7 +4,6 @@ import ImageIO
 import Synchronization
 import Testing
 import UniformTypeIdentifiers
-import VideoToolbox
 @testable import ScreenXCore
 
 /// Collects the values of a progress callback.
@@ -156,6 +155,9 @@ struct TrimAndGIFTests {
         #expect(CGImageSourceGetCount(image) == 12)
         let frame = try #require(CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any])
         #expect(frame[kCGImagePropertyPixelWidth] as? Int == 640)
+        // Frames start at the range start: frame 1 is at 1.125 s (colour 1), frame 11 at 2.375 s (colour 2).
+        expectColor(try centreColor(image, index: 1), 1)
+        expectColor(try centreColor(image, index: 11), 2)
         let container = CGImageSourceCopyProperties(image, nil) as? [CFString: Any]
         let containerGIF = container?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
         // ImageIO writes no NETSCAPE2.0 loop extension for LoopCount 1 (so every viewer plays it once) and
@@ -164,30 +166,23 @@ struct TrimAndGIFTests {
         #expect(netscapeLoopBytes(try Data(contentsOf: gif)) == "none")
     }
 
-    /// Diagnostic for the report: does CGImageDestination keep added images until it is finalized?
-    @Test func imageIORetention() throws {
-        func image(_ index: Int) throws -> CGImage {
-            var cgImage: CGImage?
-            VTCreateCGImageFromCVPixelBuffer(
-                SyntheticMedia.solidFrame(width: 64, height: 64, colorIndex: index), options: nil, imageOut: &cgImage)
-            return try #require(cgImage)
-        }
-        let first = try image(0)
-        var counts: [String: Int] = ["before": CFGetRetainCount(first)]
-        try {
-            let data = NSMutableData()
-            let destination = try #require(CGImageDestinationCreateWithData(
-                data as CFMutableData, UTType.gif.identifier as CFString, 3, nil))
-            CGImageDestinationAddImage(destination, first, nil)
-            counts["after add 1"] = CFGetRetainCount(first)
-            CGImageDestinationAddImage(destination, try image(1), nil)
-            CGImageDestinationAddImage(destination, try image(2), nil)
-            counts["after add 3"] = CFGetRetainCount(first)
-            #expect(CGImageDestinationFinalize(destination))
-            counts["after finalize"] = CFGetRetainCount(first)
-        }()
-        counts["after release"] = CFGetRetainCount(first)
-        print("imageIO retention of frame 1: \(counts.sorted { $0.key < $1.key })")
+    /// RGB of the centre pixel of frame `index`.
+    private func centreColor(_ source: CGImageSource, index: Int) throws -> (r: Int, g: Int, b: Int) {
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, index, nil))
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let context = try #require(CGContext(
+            data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        // Draw the image so that its centre lands on the single pixel.
+        context.draw(image, in: CGRect(x: -image.width / 2, y: -image.height / 2, width: image.width, height: image.height))
+        return (Int(pixel[0]), Int(pixel[1]), Int(pixel[2]))
+    }
+
+    private func expectColor(_ color: (r: Int, g: Int, b: Int), _ index: Int,
+                             sourceLocation: SourceLocation = #_sourceLocation) {
+        let expected = SyntheticMedia.palette[index]
+        #expect(abs(color.r - Int(expected.r)) <= 40 && abs(color.g - Int(expected.g)) <= 40
+                    && abs(color.b - Int(expected.b)) <= 40, "\(color) vs \(expected)", sourceLocation: sourceLocation)
     }
 
     /// "none" or the loop count stored in the NETSCAPE2.0 application extension.
