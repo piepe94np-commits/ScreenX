@@ -336,13 +336,15 @@ struct VideoFileWriterTests {
     }
 
     /// Records `seconds` of video (10 fps) and microphone audio whose host clock drifts by `ppm`.
-    private func checkDrift(ppm: Double, seconds: Double, endTolerance: Double) async throws {
+    private func checkDrift(ppm: Double, seconds: Double, endTolerance: Double,
+                            stall: Range<Double>? = nil) async throws {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
         let writer = try VideoFileWriter(url: url, settings: VideoWriterSettings(
             size: CGSize(width: width, height: height), fps: 10, codec: .h264, bitrate: 500_000, audioTracks: 1))
         await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 10, audio: [.microphone],
-                                    audioPastEnd: true, audioDriftPPM: ppm, frameDelay: .milliseconds(10),
+                                    audioPastEnd: true, audioDriftPPM: ppm, audioStall: stall,
+                                    frameDelay: .milliseconds(10),
                                     frame: SyntheticMedia.solidRecording(width: width, height: height))
         let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
         #expect(writer.failure == nil)
@@ -358,6 +360,10 @@ struct VideoFileWriterTests {
         let corrections = writer.audioTimingCorrections
         print("drift \(ppm) ppm: audio ends at \(end) s, stop \(seconds) s, corrections \(corrections)")
         if abs(ppm) * seconds / 1_000_000 > 0.021 { #expect(corrections.resyncs > 0) }
+        if let stall {
+            // The whole stall is filled with silence (give or take one input buffer).
+            #expect(abs(Double(corrections.silenceFrames) / 48_000 - (stall.upperBound - stall.lowerBound)) <= 0.03)
+        }
         #expect(abs(end - seconds) <= endTolerance)
 
         let reader = try AVAssetReader(asset: asset)
@@ -385,6 +391,11 @@ struct VideoFileWriterTests {
     @Test(arguments: [300.0, -300.0])
     func longDriftingAudioStaysInSyncAndMonotonic(_ ppm: Double) async throws {
         try await checkDrift(ppm: ppm, seconds: 60, endTolerance: 0.02)
+    }
+
+    /// A source that stalls for 5 s: the gap is filled with silence, so later audio does not shift earlier.
+    @Test func longAudioStallIsFilledWithSilence() async throws {
+        try await checkDrift(ppm: 0, seconds: 20, endTolerance: 0.02, stall: 5..<10)
     }
 
     /// Strong drift forces resyncs (forward gaps, backward trims) within 30 s.

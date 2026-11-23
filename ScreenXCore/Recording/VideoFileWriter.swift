@@ -258,7 +258,28 @@ public final class VideoFileWriter: @unchecked Sendable {
             return
         }
         switch normalizers[index].convert(sampleBuffer, at: time) {
-        case .buffer(let converted):
+        case .output(let silence, let converted, let start):
+            // Silence before the data, in chunks of at most 1 s so memory stays bounded.
+            var written = silence?.start ?? start
+            for chunk in silence?.chunks() ?? [] {
+                guard input.isReadyForMoreMediaData else {
+                    dropAudio(track: index, writtenEnd: written)
+                    return
+                }
+                guard let buffer = normalizers[index].silenceBuffer(chunk) else {
+                    dropAudio(track: index, writtenEnd: written)
+                    return
+                }
+                guard input.append(buffer) else {
+                    recordFailure(writerError())
+                    return
+                }
+                written = chunk.end
+            }
+            guard silence == nil || input.isReadyForMoreMediaData else {
+                dropAudio(track: index, writtenEnd: written)
+                return
+            }
             if !input.append(converted) { recordFailure(writerError()) }
         case .empty:
             break
@@ -268,9 +289,10 @@ public final class VideoFileWriter: @unchecked Sendable {
     }
 
     /// Counts and logs an audio drop and lets the track's normalizer resync on its next buffer.
-    private func dropAudio(track index: Int) {
+    /// `writtenEnd` is the end of what was actually appended when a converted output was only partly written.
+    private func dropAudio(track index: Int, writtenEnd: CMTime? = nil) {
         statistics.withLock { $0.droppedAudioBuffers += 1 }
-        normalizers[index].noteDrop()
+        normalizers[index].noteDrop(writtenEnd: writtenEnd)
         logDrop()
     }
 
@@ -346,13 +368,33 @@ public final class VideoFileWriter: @unchecked Sendable {
 /// Timing: output runs continuously by sample count, so the audio has no steps while the device clock
 /// and the host clock agree. When they drift apart by more than `resyncThreshold` (20–200 ppm of device
 /// drift reaches that after minutes), after a drop, or across a pause gap, the output restarts at the
-/// buffer's host-derived time. A forward jump (up to 1 s) is filled with silence, so the encoder always
-/// sees contiguous audio; a backward one trims the converted buffer's leading frames so no output starts
+/// buffer's host-derived time. A forward jump of any length (a stall of the source) is filled with
+/// silence in chunks of at most 1 s, so the encoder always sees contiguous audio; a backward one trims the converted buffer's leading frames so no output starts
 /// before the previous output end (a buffer that is fully covered is dropped). The sync error therefore
 /// stays below 20 ms, with one short step per correction.
 private final class AudioNormalizer {
+    /// Silent frames that fill a forward gap, emitted in chunks of at most 1 s.
+    struct Silence {
+        let start: CMTime
+        let frames: Int
+
+        struct Chunk {
+            let start: CMTime
+            let frames: Int
+            var end: CMTime { CMTimeAdd(start, CMTime(value: CMTimeValue(frames), timescale: CMTimeScale(VideoWriterSettings.audioSampleRate))) }
+        }
+
+        func chunks() -> [Chunk] {
+            stride(from: 0, to: frames, by: VideoWriterSettings.audioSampleRate).map { offset in
+                Chunk(start: CMTimeAdd(start, CMTime(value: CMTimeValue(offset), timescale: CMTimeScale(VideoWriterSettings.audioSampleRate))),
+                      frames: min(VideoWriterSettings.audioSampleRate, frames - offset))
+            }
+        }
+    }
+
     enum Result {
-        case buffer(CMSampleBuffer)
+        /// Converted audio starting at `start`, preceded by `silence` if there was a gap before it.
+        case output(silence: Silence?, buffer: CMSampleBuffer, start: CMTime)
         /// The converter produced no frames yet (not a drop).
         case empty
         /// Fully covered by earlier output; dropped.
@@ -370,16 +412,16 @@ private final class AudioNormalizer {
     private var outputEnd: CMTime?
     private var needsResync = false
     private static let resyncThreshold = CMTime(value: 20, timescale: 1000)
-    /// Longest gap filled with silence; longer gaps stay gaps in the timestamps.
-    private static let maxSilenceFill = CMTime(value: 1, timescale: 1)
     /// Timing corrections so far (for tests and diagnostics).
     private(set) var resyncs = 0
     private(set) var silenceFrames = 0
     private(set) var trimmedFrames = 0
 
-    /// A buffer of this track was dropped: restart timing at the next buffer.
-    func noteDrop() {
+    /// A buffer of this track was dropped: restart timing at the next buffer. If an output was only
+    /// partly appended, `writtenEnd` is where the written audio really ends.
+    func noteDrop(writtenEnd: CMTime? = nil) {
         needsResync = true
+        if let writtenEnd { outputEnd = writtenEnd }
     }
 
     /// Converts `sampleBuffer`, whose start maps to output time `time`.
@@ -437,14 +479,16 @@ private final class AudioNormalizer {
         let rate = CMTimeScale(outputFormat.sampleRate)
         let produced = CMTime(value: CMTimeValue(output.frameLength), timescale: rate)
         var skip: AVAudioFrameCount = 0
-        var silence: AVAudioFrameCount = 0
-        if let outputEnd, CMTimeCompare(start, outputEnd) > 0,
-           CMTimeCompare(CMTimeSubtract(start, outputEnd), Self.maxSilenceFill) <= 0 {
-            // Fill a forward jump with silence so the encoder sees contiguous audio; timestamp gaps
-            // would otherwise be closed up and shift everything after them.
-            silence = AVAudioFrameCount((CMTimeSubtract(start, outputEnd).seconds * outputFormat.sampleRate).rounded())
-            start = outputEnd
-            silenceFrames += Int(silence)
+        var silence: Silence?
+        if let outputEnd, CMTimeCompare(start, outputEnd) > 0 {
+            // Fill a forward jump of any length with silence so the encoder sees contiguous audio;
+            // AVAssetWriter would otherwise close the timestamp gap and shift everything after it earlier.
+            let frames = Int((CMTimeSubtract(start, outputEnd).seconds * outputFormat.sampleRate).rounded())
+            if frames > 0 {
+                silence = Silence(start: outputEnd, frames: frames)
+                start = CMTimeAdd(outputEnd, CMTime(value: CMTimeValue(frames), timescale: rate))
+                silenceFrames += frames
+            }
         } else if let outputEnd, CMTimeCompare(start, outputEnd) < 0 {
             let overlap = CMTimeSubtract(outputEnd, start).seconds * outputFormat.sampleRate
             guard overlap < Double(output.frameLength) else {
@@ -455,14 +499,32 @@ private final class AudioNormalizer {
             start = outputEnd
             trimmedFrames += Int(skip)
         }
-        let end = CMTimeAdd(
-            start, CMTime(value: CMTimeValue(silence + output.frameLength - skip), timescale: rate))
-        guard let result = Self.sampleBuffer(from: output, skipping: skip, silence: silence, at: start) else {
-            return .failed
-        }
+        let end = CMTimeAdd(start, CMTime(value: CMTimeValue(output.frameLength - skip), timescale: rate))
+        guard let result = Self.sampleBuffer(from: output, skipping: skip, at: start) else { return .failed }
         nextTime = end
         outputEnd = end
-        return .buffer(result)
+        return .output(silence: silence, buffer: result, start: start)
+    }
+
+    /// A ready buffer of silent output frames for one chunk of a gap.
+    func silenceBuffer(_ chunk: Silence.Chunk) -> CMSampleBuffer? {
+        let byteCount = chunk.frames * Int(outputFormat.streamDescription.pointee.mBytesPerFrame)
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount,
+            blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+            dataLength: byteCount, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+            let block,
+            CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0,
+                                       dataLength: byteCount) == noErr
+        else { return nil }
+        var sampleBuffer: CMSampleBuffer?
+        guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: outputFormat.formatDescription,
+            sampleCount: chunk.frames, presentationTimeStamp: chunk.start, packetDescriptions: nil,
+            sampleBufferOut: &sampleBuffer) == noErr
+        else { return nil }
+        return sampleBuffer
     }
 
     /// The input format; buffers with more than two channels and no layout get a discrete layout.
@@ -510,28 +572,23 @@ private final class AudioNormalizer {
         return withExtendedLifetime(blockBuffer) { true }
     }
 
-    /// Wraps interleaved PCM, without its first `skip` frames and after `silence` silent frames, in a ready
-    /// `CMSampleBuffer` starting at `time`.
+    /// Wraps interleaved PCM, without its first `skip` frames, in a ready `CMSampleBuffer` starting at `time`.
     private static func sampleBuffer(from buffer: AVAudioPCMBuffer, skipping skip: AVAudioFrameCount,
-                                     silence: AVAudioFrameCount, at time: CMTime) -> CMSampleBuffer? {
+                                     at time: CMTime) -> CMSampleBuffer? {
         let list = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
         guard list.count == 1, let base = list[0].mData, skip < buffer.frameLength else { return nil }
         let bytesPerFrame = Int(buffer.format.streamDescription.pointee.mBytesPerFrame)
         let data = base + Int(skip) * bytesPerFrame
-        let silenceBytes = Int(silence) * bytesPerFrame
-        let dataBytes = Int(buffer.frameLength - skip) * bytesPerFrame
-        let frameCount = silence + buffer.frameLength - skip
-        let byteCount = silenceBytes + dataBytes
+        let frameCount = buffer.frameLength - skip
+        let byteCount = Int(frameCount) * bytesPerFrame
         var block: CMBlockBuffer?
         guard CMBlockBufferCreateWithMemoryBlock(
             allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount,
             blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
             dataLength: byteCount, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
             let block,
-            silenceBytes == 0 || CMBlockBufferFillDataBytes(
-                with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: silenceBytes) == noErr,
             CMBlockBufferReplaceDataBytes(
-                with: data, blockBuffer: block, offsetIntoDestination: silenceBytes, dataLength: dataBytes) == noErr
+                with: data, blockBuffer: block, offsetIntoDestination: 0, dataLength: byteCount) == noErr
         else { return nil }
         var sampleBuffer: CMSampleBuffer?
         guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(

@@ -194,12 +194,14 @@ enum SyntheticMedia {
     /// Feeds frames at `fps` for recording times `start..<end` and, interleaved in time order, sine
     /// buffers for each audio track. With `audioPastEnd` the last audio buffer may cross `end` (it
     /// straddles a following pause). `audioDriftPPM` makes the audio host timestamps run that much faster
-    /// (positive) or slower than the sample count, like a drifting device clock. Paced so the real-time
+    /// (positive) or slower than the sample count, like a drifting device clock. No audio is delivered
+    /// for host times in `audioStall` (a stalled source). Paced so the real-time
     /// inputs keep up.
     static func record(
         _ writer: VideoFileWriter, from start: Double, to end: Double, fps: Int,
         audio tracks: [AudioTrackKind] = [], audioFormat sine: SineFormat = .stereo48k,
-        audioPastEnd: Bool = false, audioDriftPPM: Double = 0, frameDelay: Duration = .milliseconds(3),
+        audioPastEnd: Bool = false, audioDriftPPM: Double = 0, audioStall: Range<Double>? = nil,
+        frameDelay: Duration = .milliseconds(3),
         frame: (Double) -> CVPixelBuffer
     ) async {
         let rate = Double(sine.sampleRate)
@@ -215,7 +217,8 @@ enum SyntheticMedia {
             while !tracks.isEmpty, host(nextSample) < t + 1 / Double(fps) - epsilon,
                   audioPastEnd ? host(nextSample) < end - epsilon : host(nextSample) + bufferSeconds <= end + epsilon {
                 let pts = audioDriftPPM == 0 ? nil : hostTime(host(nextSample))
-                for track in tracks {
+                let stalled = audioStall?.contains(host(nextSample)) ?? false
+                for track in tracks where !stalled {
                     writer.appendAudio(sineBuffer(startSample: nextSample, format: sine, pts: pts), track: track)
                 }
                 nextSample += Int64(audioFrames)
