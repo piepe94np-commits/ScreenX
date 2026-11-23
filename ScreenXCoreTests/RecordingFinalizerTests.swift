@@ -3,7 +3,7 @@ import CoreMedia
 import Testing
 @testable import ScreenXCore
 
-@Suite(.serialized, .disabled("temporary CI experiment: writer drops without this suite"))
+@Suite(.serialized)
 struct RecordingFinalizerTests {
     private let width = 640
     private let height = 360
@@ -95,7 +95,7 @@ struct RecordingFinalizerTests {
     /// writer is still running. Afterwards the writer is cancelled and dropped: a writer that is simply
     /// dropped while writing stays alive inside AVFoundation with its encoder session, which slowed the
     /// encoder for the following writer tests on CI (dropped frames in three runs in a row).
-    @Test func unfinishedMovIsReadableAndFinalizes() async throws {
+    @Test(.disabled("temporary CI experiment")) func unfinishedMovIsReadableAndFinalizes() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 11.00.00.mov")
