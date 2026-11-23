@@ -1,6 +1,6 @@
 # ScreenX – Bildschirmaufnahme (Video & GIF) – Design
 
-Stand: 2026-11-23 · Status: zur Durchsicht · Meilenstein M5
+Stand: 2026-11-23 · Status: zur Freigabe · Meilenstein M5
 Baut auf: `docs/superpowers/specs/2026-11-03-screenx-design.md` (M1–M4; dort §11 „Bildschirmvideo / GIF-Aufnahme“)
 
 ## 1. Ziel und Warum
@@ -170,6 +170,7 @@ SCStream ─┬─ .screen      CMSampleBuffer (BGRA, bereits auf Zielauflösung
 - **Ausschluss:** Alle ScreenX-Fenster (Leiste, Rahmen, Countdown, Vorschaukarten, Klick-Kreise siehe unten) werden über `SCContentFilter` ausgeschlossen. Ausnahme: Klick-Kreise **sollen** ins Video und werden deshalb nicht ausgeschlossen.
 - **Klicks hervorheben** (nur Bereich- und Bildschirm-Modus; im Fenster-Modus ist die Option ausgegraut mit Hinweis, weil die Fensteraufnahme nur das Fenster selbst enthält): globaler Maus-Monitor (`NSEvent.addGlobalMonitorForEvents`, Linksklick). Ein transparentes, klickdurchlässiges Fenster zeigt an der Klickstelle einen kurzen Kreis (≈ 0,4 s, halbtransparent). Er ist auch auf dem Bildschirm sichtbar und erscheint so im Video. Es wird kein Frame nachbearbeitet. Technisch: ein dauerhaft geöffnetes Overlay-Fenster pro Bildschirm, das im Filter über `exceptingWindows` ausdrücklich eingeschlossen wird.
 - **Mitteilungen ausblenden** (Option, Standard an für Bildschirm-Modus): `com.apple.notificationcenterui` wird ausgeschlossen. Taucht die App erst später in `SCShareableContent` auf (kein Banner beim Start), wird der Filter während der Aufnahme per `updateContentFilter` nachgezogen. Das ist auf macOS 26 zu prüfen und nicht garantiert; im Zweifel steht es so in der Checkliste.
+- **Systemton im Fenster-Modus** *(Entscheidung des Nutzers: „alles, was man hört“)*: Ein Fensterfilter liefert nur den Ton der App des Fensters. Deshalb läuft im Fenster-Modus mit Systemton ein **zweiter `SCStream`** nur für Ton: Bildschirm-Filter, der ScreenX selbst ausschließt, minimale Bildgröße und Bildrate, Bild-Ausgabe ignoriert. Beide Streams nutzen dieselbe Uhr (Host-Zeit der Sample-Buffer). Der Writer ordnet den Ton über die Zeitstempel ein. Fällt der Ton-Stream aus, läuft die Aufnahme ohne Systemton weiter, mit Hinweis am Ende. Im Bereich- und Bildschirm-Modus kommt der Systemton aus dem einen Stream, gefiltert ohne ScreenX.
 - **Fenster-Modus:** `SCContentFilter(desktopIndependentWindow:)`. Das Fenster wird auch verdeckt oder verschoben aufgenommen. Ändert es die Größe, wird der Inhalt in die festen Zielmaße eingepasst (Letterbox). Minimiert friert das Bild ein, der Ton läuft weiter. Wird das Fenster geschlossen, endet die Aufnahme regulär mit Hinweis.
 - **Speicherplatz:** Vor dem Start mindestens 1 GB frei, sonst Warnung mit „Trotzdem starten“. Während der Aufnahme alle 10 s prüfen. Unter 300 MB: Aufnahme sauber beenden und Mitteilung zeigen.
 - **Fehler:** Stream- oder Writer-Fehler beenden die Aufnahme, das bis dahin Geschriebene wird fertiggestellt und als Karte gezeigt, dazu eine Fehlermeldung.
