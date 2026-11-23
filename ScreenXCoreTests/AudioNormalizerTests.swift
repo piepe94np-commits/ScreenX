@@ -42,7 +42,7 @@ struct AudioNormalizerTests {
                                                   timescale: 48_000))
         }
         #expect(outputs > 390)
-        #expect(normalizer.resyncs >= 3)
+        #expect(normalizer.resyncs == 2)  // the stall and the backward jump; drift and straddle stay below 20 ms
         #expect(normalizer.trimmedFrames > 0)
         #expect(normalizer.silenceFrames > 2 * 48_000)
     }
