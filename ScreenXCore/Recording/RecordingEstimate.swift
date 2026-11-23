@@ -5,7 +5,9 @@ public enum RecordingEstimate {
     static let audioBitrate = 128_000
     static let minBitrate = 250_000
     static let maxBitrate = 40_000_000
-    static let gifBytesPerPixelFrame = 0.08
+    /// Measured with dense scrolling text (0.16 bytes per pixel and frame) and solid colours (0.001); every
+    /// GIF frame is stored in full, so text-heavy screens cost about the same per frame, static or not.
+    static let gifBytesPerPixelFrame = 0.12
 
     /// Scales `source` so the longer side fits the resolution step (never upscaling),
     /// then rounds both sides down to even values of at least 2.

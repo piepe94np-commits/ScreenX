@@ -131,6 +131,7 @@ struct TrimAndGIFTests {
         let container = try #require(CGImageSourceCopyProperties(image, nil) as? [CFString: Any])
         let containerGIF = try #require(container[kCGImagePropertyGIFDictionary] as? [CFString: Any])
         #expect(containerGIF[kCGImagePropertyGIFLoopCount] as? Int == 0)
+        #expect(netscapeLoopBytes(try Data(contentsOf: gif)) == "sub-block 3 id 1 loops 0")
 
         let values = progress.all
         #expect(values.count == 30)
@@ -157,38 +158,36 @@ struct TrimAndGIFTests {
         #expect(frame[kCGImagePropertyPixelWidth] as? Int == 640)
         let container = CGImageSourceCopyProperties(image, nil) as? [CFString: Any]
         let containerGIF = container?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
-        print("plays once: read-back GIF properties \(String(describing: containerGIF))")
-        print("plays once: NETSCAPE extension \(netscapeLoopBytes(try Data(contentsOf: gif)))")
+        // ImageIO writes no NETSCAPE2.0 loop extension for LoopCount 1 (so every viewer plays it once) and
+        // reads such a file back as LoopCount 1.
+        #expect(containerGIF?[kCGImagePropertyGIFLoopCount] as? Int == 1)
+        #expect(netscapeLoopBytes(try Data(contentsOf: gif)) == "none")
     }
 
-    /// Diagnostic for the report: what ImageIO writes for LoopCount 0, 1 and no LoopCount, and whether
-    /// CGImageDestination keeps added images until it is finalized.
-    @Test func imageIOLoopCountAndRetention() throws {
-        let pixels = SyntheticMedia.solidFrame(width: 16, height: 16, colorIndex: 0)
-        var cgImage: CGImage?
-        VTCreateCGImageFromCVPixelBuffer(pixels, options: nil, imageOut: &cgImage)
-        let image = try #require(cgImage)
-        for loopCount in [0, 1, nil] as [Int?] {
+    /// Diagnostic for the report: does CGImageDestination keep added images until it is finalized?
+    @Test func imageIORetention() throws {
+        func image(_ index: Int) throws -> CGImage {
+            var cgImage: CGImage?
+            VTCreateCGImageFromCVPixelBuffer(
+                SyntheticMedia.solidFrame(width: 64, height: 64, colorIndex: index), options: nil, imageOut: &cgImage)
+            return try #require(cgImage)
+        }
+        let first = try image(0)
+        var counts: [String: Int] = ["before": CFGetRetainCount(first)]
+        try {
             let data = NSMutableData()
             let destination = try #require(CGImageDestinationCreateWithData(
-                data as CFMutableData, UTType.gif.identifier as CFString, 2, nil))
-            if let loopCount {
-                CGImageDestinationSetProperties(destination, [
-                    kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: loopCount],
-                ] as CFDictionary)
-            }
-            let before = CFGetRetainCount(image)
-            CGImageDestinationAddImage(destination, image, nil)
-            let afterAdd = CFGetRetainCount(image)
-            CGImageDestinationAddImage(destination, image, nil)
+                data as CFMutableData, UTType.gif.identifier as CFString, 3, nil))
+            CGImageDestinationAddImage(destination, first, nil)
+            counts["after add 1"] = CFGetRetainCount(first)
+            CGImageDestinationAddImage(destination, try image(1), nil)
+            CGImageDestinationAddImage(destination, try image(2), nil)
+            counts["after add 3"] = CFGetRetainCount(first)
             #expect(CGImageDestinationFinalize(destination))
-            let afterFinalize = CFGetRetainCount(image)
-            let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
-            let properties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any]
-            print("loopCount \(String(describing: loopCount)): NETSCAPE \(netscapeLoopBytes(data as Data)), "
-                + "read back \(String(describing: properties?[kCGImagePropertyGIFDictionary])), "
-                + "retain count before \(before) after add \(afterAdd) after finalize \(afterFinalize)")
-        }
+            counts["after finalize"] = CFGetRetainCount(first)
+        }()
+        counts["after release"] = CFGetRetainCount(first)
+        print("imageIO retention of frame 1: \(counts.sorted { $0.key < $1.key })")
     }
 
     /// "none" or the loop count stored in the NETSCAPE2.0 application extension.
@@ -234,7 +233,8 @@ struct TrimAndGIFTests {
 
         #expect(throws: CancellationError.self) { try result.get() }
         #expect(!FileManager.default.fileExists(atPath: gif.path))
-        #expect(try fileNames(in: directory) == [source.lastPathComponent])
+        let remaining = try fileNames(in: directory)
+        #expect(remaining == [source.lastPathComponent])
     }
 
     @Test func gifFailsCleanlyOnBrokenSource() async throws {
