@@ -92,10 +92,10 @@ struct RecordingFinalizerTests {
 
     /// A crash: the writer records 25 s in real time and never finishes. The file a crash leaves behind
     /// is the `.mov` exactly as it is on disk at that moment, so the test takes a copy of it while the
-    /// writer is still running. Afterwards the writer is cancelled and dropped: a writer that is simply
-    /// dropped while writing stays alive inside AVFoundation with its encoder session, which slowed the
-    /// encoder for the following writer tests on CI (dropped frames in three runs in a row).
-    @Test(.disabled("temporary CI experiment")) func unfinishedMovIsReadableAndFinalizes() async throws {
+    /// writer is still running. Afterwards the writer finishes its own (live) file normally: a writer that
+    /// is dropped or cancelled without `finish` left the encoder slowed down for the following writer
+    /// tests on CI (dropped frames in four runs in a row; green without this test).
+    @Test func unfinishedMovIsReadableAndFinalizes() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 11.00.00.mov")
@@ -119,7 +119,8 @@ struct RecordingFinalizerTests {
     }
 
     /// Records in (about) real time, so fragments are written as in a real recording, copies the unfinished
-    /// file to `crashed`, then cancels and drops the writer without ever calling `finish`.
+    /// file to `crashed` (the state a crash leaves on disk), then finishes the live file only to release
+    /// the encoder; the copy is never touched by the writer again.
     private func recordCrashedFile(to crashed: URL, seconds: Double) async throws {
         let live = FileManager.default.temporaryDirectory.appendingPathComponent("ScreenXLive-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: live) }
@@ -128,7 +129,7 @@ struct RecordingFinalizerTests {
                                     frameDelay: .milliseconds(100),
                                     frame: SyntheticMedia.solidRecording(width: 320, height: 180))
         try FileManager.default.copyItem(at: live, to: crashed)
-        writer.simulateWriterFailureForTesting()
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
     }
 
     @Test func leftoversFound() throws {
