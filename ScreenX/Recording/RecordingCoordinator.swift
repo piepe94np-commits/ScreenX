@@ -125,6 +125,7 @@ final class RecordingCoordinator {
         model.onClose = { [weak self] in self?.closeBar() }
         model.onEditProfiles = { [weak self] in
             self?.closeBar()
+            SettingsNavigation.shared.tab = .video
             self?.link.openSettings()
         }
         let bar = RecordingBarPanel(model: model)
