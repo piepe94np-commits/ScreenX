@@ -262,6 +262,12 @@ final class TrimWindowController: NSObject, NSWindowDelegate {
                 self?.showError(String(localized: "Kürzen fehlgeschlagen"), detail: error.localizedDescription)
                 return
             }
+            // Cancelled (or window closed) after the export finished: keep the original, drop the new file.
+            if Task.isCancelled {
+                try? FileManager.default.removeItem(at: destination)
+                self?.finishJob()
+                return
+            }
             var result = destination
             if replace {
                 // Der Player hält die Datei offen: vorher freigeben.
@@ -281,7 +287,8 @@ final class TrimWindowController: NSObject, NSWindowDelegate {
                 }
             }
             TrimWindow.onResult?(RecordingResult(
-                url: result, duration: end - start, size: VideoFileInfo.fileSize(result), warnings: []
+                url: result, duration: (await VideoFileInfo.info(url: result))?.duration ?? end - start,
+                size: VideoFileInfo.fileSize(result), warnings: []
             ))
             self?.finishJob()
             self?.window.close()

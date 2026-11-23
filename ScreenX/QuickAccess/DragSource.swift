@@ -64,6 +64,9 @@ final class DragSourceView: NSView, NSDraggingSource {
 
     private var mouseDownPoint: NSPoint?
     private var isDragging = false
+    /// Only temporary export files may be moved by the drop target; a recording in the save folder
+    /// must stay where it is (Finder would otherwise move it on the same volume).
+    private var draggedFileIsTemporary = true
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
@@ -99,6 +102,8 @@ final class DragSourceView: NSView, NSDraggingSource {
             onDragEnded?(false)
             return
         }
+        draggedFileIsTemporary = url.standardizedFileURL.path
+            .hasPrefix(FileManager.default.temporaryDirectory.standardizedFileURL.path)
         let item = NSDraggingItem(pasteboardWriter: url as NSURL)
         item.setDraggingFrame(bounds, contents: image)
         let session = beginDraggingSession(with: [item], event: event, source: self)
@@ -112,7 +117,8 @@ final class DragSourceView: NSView, NSDraggingSource {
         _ session: NSDraggingSession,
         sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
-        context == .outsideApplication ? [.copy, .generic] : []
+        guard context == .outsideApplication else { return [] }
+        return draggedFileIsTemporary ? [.copy, .generic] : [.copy]
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {

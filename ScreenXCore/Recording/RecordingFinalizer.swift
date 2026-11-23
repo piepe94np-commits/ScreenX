@@ -11,6 +11,8 @@ public enum RecordingFinalizerError: Error, Equatable, Sendable {
     case destinationExists
     /// Writing the `.mp4` failed.
     case writeFailed(String)
+    /// The volume has too little free space for the `.mp4` next to the `.mov`.
+    case notEnoughSpace
 }
 
 extension RecordingFinalizerError: LocalizedError {
@@ -24,6 +26,8 @@ extension RecordingFinalizerError: LocalizedError {
             String(localized: "Es gibt bereits eine fertige Datei mit diesem Namen.")
         case .writeFailed(let reason):
             String(localized: "Die Aufnahme konnte nicht fertiggestellt werden: \(reason)")
+        case .notEnoughSpace:
+            String(localized: "Zu wenig Speicherplatz zum Fertigstellen. Die MOV-Datei bleibt erhalten und ist abspielbar.")
         }
     }
 }
@@ -51,6 +55,9 @@ public enum RecordingFinalizer {
                 url.lastPathComponent.hasPrefix(filePrefix)
                     && url.pathExtension.lowercased() == "mov"
                     && !excluded.contains(url.resolvingSymlinksInPath().path)
+                    // Trimmed copies of a .mov are finished files, not crashed recordings.
+                    && !url.deletingPathExtension().lastPathComponent.hasSuffix(" gekürzt")
+                    && url.deletingPathExtension().lastPathComponent.range(of: " gekürzt ") == nil
                     && !FileManager.default.fileExists(atPath: finalURL(for: url).path)
             }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
@@ -68,6 +75,12 @@ public enum RecordingFinalizer {
         let temp = mov.deletingLastPathComponent().appendingPathComponent(
             "." + mov.deletingPathExtension().lastPathComponent + ".finalizing.mp4")
         try? FileManager.default.removeItem(at: temp)
+        // The .mp4 is about as large as the .mov; a little headroom avoids filling the disk completely.
+        let movSize = ((try? FileManager.default.attributesOfItem(atPath: mov.path)[.size]) as? NSNumber)?.int64Value ?? 0
+        let free = (try? mov.deletingLastPathComponent()
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage
+        if let free, free < movSize + 50_000_000 { throw RecordingFinalizerError.notEnoughSpace }
         do {
             try await transcode(mov: mov, to: temp)
             try FileManager.default.moveItem(at: temp, to: target)

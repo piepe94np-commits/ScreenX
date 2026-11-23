@@ -287,6 +287,7 @@
     "Das gekürzte Video konnte nicht gespeichert werden: %@" : {},
     "Der gewählte Bereich liegt außerhalb des Videos." : {},
     "Die Datei enthält kein Video." : {},
+    "Zu wenig Speicherplatz zum Fertigstellen. Die MOV-Datei bleibt erhalten und ist abspielbar." : {},
     "Ein Bild des Videos konnte nicht gelesen werden: %@" : {},
     "Das GIF konnte nicht gespeichert werden: %@" : {},
     "Es läuft bereits eine Aufnahme." : {},

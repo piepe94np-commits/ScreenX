@@ -24,7 +24,7 @@ struct MenuBarContent: View {
             }
         }
 
-        if !coordinator.videoRecorder.isRecording {
+        if coordinator.videoRecorder.phase == .idle {
             Button(videoTitle) {
                 // Erst nach dem Schließen des Menüs, damit die Leiste Key werden kann.
                 Task { @MainActor in coordinator.videoRecorder.toggle() }
