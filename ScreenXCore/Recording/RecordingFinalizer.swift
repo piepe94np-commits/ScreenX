@@ -96,7 +96,14 @@ public enum RecordingFinalizer {
         let transform: CGAffineTransform
         do {
             videoTracks = try await asset.loadTracks(withMediaType: .video)
-            audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            // A source that never delivered (e.g. a failed system-audio stream) leaves an empty track;
+            // mixing it can make the reader fail, so only tracks with samples are mixed.
+            var withSamples: [AVAssetTrack] = []
+            for track in try await asset.loadTracks(withMediaType: .audio) {
+                let range = try await track.load(.timeRange)
+                if range.duration.isValid, CMTimeCompare(range.duration, .zero) > 0 { withSamples.append(track) }
+            }
+            audioTracks = withSamples
             duration = try await asset.load(.duration)
             guard let video = videoTracks.first else { throw RecordingFinalizerError.noVideo }
             formatHint = try await video.load(.formatDescriptions).first

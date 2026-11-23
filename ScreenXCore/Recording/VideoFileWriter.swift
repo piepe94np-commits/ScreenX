@@ -62,6 +62,7 @@ public final class VideoFileWriter: @unchecked Sendable {
         var droppedVideoFrames = 0
         var droppedAudioBuffers = 0
         var failure: VideoWriterError?
+        var hasWrittenVideo = false
     }
     private let statistics = OSAllocatedUnfairLock(initialState: Statistics())
 
@@ -146,6 +147,9 @@ public final class VideoFileWriter: @unchecked Sendable {
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber
         return size?.int64Value ?? 0
     }
+
+    /// True once at least one video frame was appended to the file.
+    public var hasWrittenVideo: Bool { statistics.withLock { $0.hasWrittenVideo } }
 
     /// Video frames dropped because the input was not ready for more data.
     public var droppedVideoFrames: Int { statistics.withLock { $0.droppedVideoFrames } }
@@ -238,6 +242,7 @@ public final class VideoFileWriter: @unchecked Sendable {
             return
         }
         if adaptor.append(pixelBuffer, withPresentationTime: time) {
+            if lastVideoTime == nil { statistics.withLock { $0.hasWrittenVideo = true } }
             lastVideoTime = time
         } else {
             recordFailure(writerError())

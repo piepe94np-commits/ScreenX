@@ -1,18 +1,23 @@
 import Carbon.HIToolbox
 import ScreenXCore
 
-/// Registers the global capture hotkeys via Carbon. Hotkey ID = index in `CaptureMode.allCases`.
+/// Registers the global hotkeys via Carbon. Hotkey ID = index in `CaptureMode.allCases`, or `videoID` for
+/// "Video aufnehmen".
 @MainActor
 final class HotkeyCenter {
     /// 'SCRX'
     private static let signature: FourCharCode = 0x5343_5258
 
+    private static let videoID: UInt32 = 100
+
     private let handler: @MainActor (CaptureMode) -> Void
+    private let videoHandler: @MainActor () -> Void
     private var eventHandler: EventHandlerRef?
     private var hotKeyRefs: [EventHotKeyRef] = []
 
-    init(handler: @escaping @MainActor (CaptureMode) -> Void) {
+    init(handler: @escaping @MainActor (CaptureMode) -> Void, videoHandler: @escaping @MainActor () -> Void) {
         self.handler = handler
+        self.videoHandler = videoHandler
 
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -35,13 +40,19 @@ final class HotkeyCenter {
                 guard status == noErr, hotKeyID.signature == HotkeyCenter.signature else {
                     return OSStatus(eventNotHandledErr)
                 }
+                let center = Unmanaged<HotkeyCenter>.fromOpaque(userData)
+                if hotKeyID.id == HotkeyCenter.videoID {
+                    // Carbon delivers application-target hotkey events on the main thread.
+                    MainActor.assumeIsolated {
+                        center.takeUnretainedValue().videoHandler()
+                    }
+                    return noErr
+                }
                 let index = Int(hotKeyID.id)
                 guard CaptureMode.allCases.indices.contains(index) else {
                     return OSStatus(eventNotHandledErr)
                 }
                 let mode = CaptureMode.allCases[index]
-                let center = Unmanaged<HotkeyCenter>.fromOpaque(userData)
-                // Carbon delivers application-target hotkey events on the main thread.
                 MainActor.assumeIsolated {
                     center.takeUnretainedValue().handler(mode)
                 }
@@ -62,27 +73,32 @@ final class HotkeyCenter {
     }
 
     /// Replaces all existing registrations. A failing hotkey does not affect the others.
-    func register(_ hotkeys: [CaptureMode: KeyCombo]) -> [CaptureMode: HotkeyError] {
+    /// `video` is the "Video aufnehmen" hotkey (`nil` = none).
+    func register(_ hotkeys: [CaptureMode: KeyCombo], video: KeyCombo?)
+        -> (modes: [CaptureMode: HotkeyError], video: HotkeyError?) {
         unregisterAll()
         var errors: [CaptureMode: HotkeyError] = [:]
         for (index, mode) in CaptureMode.allCases.enumerated() {
             guard let combo = hotkeys[mode] else { continue }
-            var ref: EventHotKeyRef?
-            let status = RegisterEventHotKey(
-                combo.keyCode,
-                Self.carbonModifiers(combo.modifiers),
-                EventHotKeyID(signature: Self.signature, id: UInt32(index)),
-                GetApplicationEventTarget(),
-                0,
-                &ref
-            )
-            if let error = HotkeyError.from(status: status, combo: combo) {
-                errors[mode] = error
-            } else if let ref {
-                hotKeyRefs.append(ref)
-            }
+            errors[mode] = register(combo, id: UInt32(index))
         }
-        return errors
+        let videoError = video.flatMap { register($0, id: Self.videoID) }
+        return (errors, videoError)
+    }
+
+    private func register(_ combo: KeyCombo, id: UInt32) -> HotkeyError? {
+        var ref: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            combo.keyCode,
+            Self.carbonModifiers(combo.modifiers),
+            EventHotKeyID(signature: Self.signature, id: id),
+            GetApplicationEventTarget(),
+            0,
+            &ref
+        )
+        if let error = HotkeyError.from(status: status, combo: combo) { return error }
+        if let ref { hotKeyRefs.append(ref) }
+        return nil
     }
 
     func unregisterAll() {

@@ -92,6 +92,26 @@ struct RecordingFinalizerTests {
         #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
     }
 
+    /// A source that never delivered leaves an empty audio track (window mode with a failed system-audio
+    /// stream, or a silent microphone); the recording must still become an .mp4.
+    @Test(arguments: [(tracks: 2, fed: [AudioTrackKind.microphone], expected: 1), (tracks: 1, fed: [], expected: 0)])
+    func emptyAudioTrackIsSkipped(_ setup: (tracks: Int, fed: [AudioTrackKind], expected: Int)) async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 10.00.00.mov")
+        let writer = try VideoFileWriter(url: mov, settings: settings(audioTracks: setup.tracks))
+        await SyntheticMedia.record(writer, from: 0, to: 2, fps: 30, audio: setup.fed,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(2))
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+
+        let asset = AVURLAsset(url: mp4)
+        try await expectPassthroughVideo(asset)
+        #expect(try await asset.loadTracks(withMediaType: .audio).count == setup.expected)
+        #expect(abs(try await asset.load(.duration).seconds - 2) <= 0.1)
+    }
+
     @Test func finalizeVideoOnly() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

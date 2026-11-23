@@ -57,6 +57,9 @@ final class RecordingEngine {
     private let settings: () -> AppSettings
     @ObservationIgnored private var session: Session?
     @ObservationIgnored private var isStarting = false
+    /// Set by `stop()`/`discard()` while `start` is still pending; `start` then tears down instead of recording.
+    @ObservationIgnored private var startCancelled = false
+    @ObservationIgnored private var isDiscarding = false
     /// The stop in progress or the last one; a later `stop()` (after an auto-stop) returns its result.
     @ObservationIgnored private var stopTask: Task<RecordingResult, Never>?
     @ObservationIgnored private var ticker: Task<Void, Never>?
@@ -98,6 +101,7 @@ final class RecordingEngine {
             throw CaptureError.failed(String(localized: "Es läuft bereits eine Aufnahme."))
         }
         isStarting = true
+        startCancelled = false
         defer { isStarting = false }
         stopTask = nil
         elapsed = 0
@@ -215,6 +219,13 @@ final class RecordingEngine {
         session = Session(writer: writer, mov: mov, profile: profile, directory: directory, started: now,
                           mainStream: mainStream, audioStream: audioStream, sinks: sinks, warnings: warnings,
                           activeSince: now, lastDiskCheck: now)
+        if startCancelled, let session {
+            // stop() or discard() came while the start was pending: tear down instead of recording.
+            await Self.stopStreams(session)
+            await Self.abandon(writer: session.writer, mov: session.mov)
+            self.session = nil
+            throw CancellationError()
+        }
         writer.onFailure = { [weak self] error in
             let text = error.localizedDescription
             Task { @MainActor in self?.autoStop(.writerFailed(text)) }
@@ -246,8 +257,9 @@ final class RecordingEngine {
     /// that stop. Never throws: problems end up in `warnings` (with no picture at all the `.mov` may be missing).
     func stop() async -> RecordingResult {
         if let stopTask { return await stopTask.value }
-        guard session != nil else {
-            assertionFailure("stop() without a recording")
+        // No recording, a start still pending (it is cancelled) or a discard in progress: nothing to save.
+        guard session != nil, !isDiscarding else {
+            if isStarting { startCancelled = true }
             return RecordingResult(url: settings().saveDirectory, duration: 0, size: 0,
                                    warnings: [String(localized: "Es läuft keine Aufnahme.")])
         }
@@ -258,7 +270,12 @@ final class RecordingEngine {
 
     /// Stops everything and deletes the recording.
     func discard() async {
-        guard stopTask == nil, let session else { return }
+        guard stopTask == nil, !isDiscarding, let session else {
+            if isStarting { startCancelled = true }
+            return
+        }
+        isDiscarding = true
+        defer { isDiscarding = false }
         state = .finishing
         stopTicker()
         await Self.stopStreams(session)
@@ -290,11 +307,17 @@ final class RecordingEngine {
 
         var warnings = session.warnings
         let writer = session.writer
+        var wroteFrames = true
         do {
             _ = try await writer.finish(stopAt: stopTime)
         } catch {
             // The fragmented .mov may still hold everything up to the last fragment; try to finalize it anyway.
             warnings.append(error.localizedDescription)
+            if !writer.hasWrittenVideo {
+                // Nothing was recorded: remove the stub instead of finalizing it into a second error.
+                wroteFrames = false
+                try? FileManager.default.removeItem(at: session.mov)
+            }
         }
         if writer.droppedAudioBuffers > 0 {
             let count = writer.droppedAudioBuffers
@@ -302,7 +325,7 @@ final class RecordingEngine {
         }
 
         var url = session.mov
-        if FileManager.default.fileExists(atPath: session.mov.path) {
+        if wroteFrames, FileManager.default.fileExists(atPath: session.mov.path) {
             do {
                 url = try await RecordingFinalizer.finalize(mov: session.mov)
                 if session.profile.output == .gif {
