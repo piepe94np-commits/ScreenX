@@ -126,7 +126,7 @@ struct RecordingFinalizerTests {
         defer { try? FileManager.default.removeItem(at: live) }
         let writer = try VideoFileWriter(url: live, settings: settings(audioTracks: 1, width: 320, height: 180, fps: 10))
         await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 10, audio: [.system],
-                                    frameDelay: .milliseconds(100),
+                                    frameDelay: .milliseconds(10),
                                     frame: SyntheticMedia.solidRecording(width: 320, height: 180))
         try FileManager.default.copyItem(at: live, to: crashed)
         _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
