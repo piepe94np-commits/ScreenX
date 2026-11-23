@@ -90,16 +90,18 @@ struct RecordingFinalizerTests {
         #expect(abs(duration - 2) <= 0.1)
     }
 
-    /// A crash: the writer records 25 s in real time and is dropped without `finish`.
+    /// A crash: the writer records 25 s in real time and never finishes. The file a crash leaves behind
+    /// is the `.mov` exactly as it is on disk at that moment, so the test takes a copy of it while the
+    /// writer is still running. Afterwards the writer is cancelled and dropped: a writer that is simply
+    /// dropped while writing stays alive inside AVFoundation with its encoder session, which slowed the
+    /// encoder for the following writer tests on CI (dropped frames in three runs in a row).
     @Test func unfinishedMovIsReadableAndFinalizes() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 11.00.00.mov")
-        try await abandonRecording(at: mov, seconds: 25)
-        // Let anything the dropped writer still does settle.
-        try await Task.sleep(for: .seconds(2))
+        try await recordCrashedFile(to: mov, seconds: 25)
         let size = (try? FileManager.default.attributesOfItem(atPath: mov.path)[.size] as? NSNumber)?.int64Value
-        print("unfinished mov: exists \(FileManager.default.fileExists(atPath: mov.path)), \(size ?? -1) bytes")
+        print("unfinished mov: \(size ?? -1) bytes")
 
         let movDuration = try await AVURLAsset(url: mov).load(.duration).seconds
         print("unfinished mov duration: \(movDuration) s")
@@ -116,13 +118,17 @@ struct RecordingFinalizerTests {
         #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
     }
 
-    /// Records in (about) real time, so fragments are written as in a real recording, then drops the
-    /// writer without calling `finish`.
-    private func abandonRecording(at url: URL, seconds: Double) async throws {
-        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: 1, width: 320, height: 180, fps: 10))
+    /// Records in (about) real time, so fragments are written as in a real recording, copies the unfinished
+    /// file to `crashed`, then cancels and drops the writer without ever calling `finish`.
+    private func recordCrashedFile(to crashed: URL, seconds: Double) async throws {
+        let live = FileManager.default.temporaryDirectory.appendingPathComponent("ScreenXLive-\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: live) }
+        let writer = try VideoFileWriter(url: live, settings: settings(audioTracks: 1, width: 320, height: 180, fps: 10))
         await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 10, audio: [.system],
                                     frameDelay: .milliseconds(100),
                                     frame: SyntheticMedia.solidRecording(width: 320, height: 180))
+        try FileManager.default.copyItem(at: live, to: crashed)
+        writer.simulateWriterFailureForTesting()
     }
 
     @Test func leftoversFound() throws {
