@@ -3,7 +3,8 @@ import OSLog
 import ScreenXCore
 
 /// Steuert die Auswahl-Overlays für Bereich und Fenster. `nil` als Ergebnis bedeutet Abbruch,
-/// ein geworfener Fehler einen echten Fehlschlag.
+/// ein geworfener Fehler einen echten Fehlschlag. Für Videos gibt es Varianten, die nur das Ziel
+/// (Rechteck bzw. Fenster-ID) liefern und kein Bild aufnehmen.
 /// Die Continuation wird genau einmal fortgesetzt, die Overlays sind danach geschlossen.
 @MainActor
 final class OverlayController {
@@ -11,7 +12,15 @@ final class OverlayController {
 
     private let service: CaptureService
     private var isRunning = false
-    private var continuation: CheckedContinuation<Capture?, any Error>?
+    private var continuation: CheckedContinuation<Selection?, any Error>?
+    /// Nur das Ziel liefern (Video), kein Bild aufnehmen.
+    private var targetOnly = false
+
+    private enum Selection {
+        case capture(Capture)
+        case area(DisplayInfo, CGRect)
+        case window(WindowInfo)
+    }
     private var windows: [OverlayWindow] = []
 
     // Bereichsmodus
@@ -36,8 +45,31 @@ final class OverlayController {
         guard !isRunning else { return nil }
         isRunning = true
         defer { isRunning = false }
+        targetOnly = false
         let displays = try await freezeDisplays()
-        return try await withCheckedThrowingContinuation { continuation in
+        guard case .capture(let capture)? = try await runArea(on: displays) else { return nil }
+        return capture
+    }
+
+    /// Bereich für ein Video, ohne Standbild (der Bildschirm läuft weiter). Liefert den Monitor und das
+    /// Rechteck in Punkten relativ zur oberen linken Ecke des Monitors, auf ganze Pixel gerundet.
+    func selectAreaRect() async throws -> (CGDirectDisplayID, CGRect)? {
+        guard !isRunning else { return nil }
+        isRunning = true
+        defer { isRunning = false }
+        targetOnly = true
+        frozen = [:]
+        let displays = try await service.displays()
+        guard !displays.isEmpty else { throw CaptureError.displayNotFound }
+        guard case .area(let display, let global)? = try await runArea(on: displays) else { return nil }
+        let pixels = SelectionGeometry.pixelRect(for: global, on: display)
+        let local = CGRect(x: pixels.minX / display.scale, y: pixels.minY / display.scale,
+                           width: pixels.width / display.scale, height: pixels.height / display.scale)
+        return (display.id, local)
+    }
+
+    private func runArea(on displays: [DisplayInfo]) async throws -> Selection? {
+        try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             for display in displays {
                 let view = AreaSelectionView(display: display, image: frozen[display.id])
@@ -112,8 +144,13 @@ final class OverlayController {
     }
 
     private func completeArea() {
-        guard let drag, let image = frozen[drag.display.id] else { return finish(nil) }
+        guard let drag else { return finish(nil) }
         let rect = SelectionGeometry.clamp(drag.rect, to: drag.display.frame)
+        if targetOnly {
+            guard SelectionGeometry.isValid(rect) else { return finish(nil) }
+            return finish(.success(.area(drag.display, rect)))
+        }
+        guard let image = frozen[drag.display.id] else { return finish(nil) }
         guard SelectionGeometry.isValid(rect),
               let cropped = ImageCropper.crop(image, to: SelectionGeometry.pixelRect(for: rect, on: drag.display))
         else { return finish(nil) }
@@ -126,6 +163,22 @@ final class OverlayController {
         guard !isRunning else { return nil }
         isRunning = true
         defer { isRunning = false }
+        targetOnly = false
+        guard case .capture(let capture)? = try await runWindow(shadow: shadow) else { return nil }
+        return capture
+    }
+
+    /// Fenster für ein Video: nur die ID, kein Bild.
+    func selectWindowID() async throws -> CGWindowID? {
+        guard !isRunning else { return nil }
+        isRunning = true
+        defer { isRunning = false }
+        targetOnly = true
+        guard case .window(let window)? = try await runWindow(shadow: false) else { return nil }
+        return window.id
+    }
+
+    private func runWindow(shadow: Bool) async throws -> Selection? {
         do {
             candidates = try await service.windows()
         } catch {
@@ -170,6 +223,9 @@ final class OverlayController {
     }
 
     private func captureWindow(_ target: WindowInfo) {
+        if targetOnly {
+            return finish(.success(.window(target)))
+        }
         let scale = backingScale(for: target)
         let shadow = shadow
         closeWindows()
@@ -223,11 +279,11 @@ final class OverlayController {
     }
 
     private func finish(_ capture: Capture?) {
-        finish(.success(capture))
+        finish(.success(capture.map(Selection.capture)))
     }
 
     /// Schließt die Overlays und setzt die Continuation genau einmal fort.
-    private func finish(_ result: Result<Capture?, any Error>) {
+    private func finish(_ result: Result<Selection?, any Error>) {
         closeWindows()
         guard let continuation else { return }
         self.continuation = nil

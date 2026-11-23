@@ -18,6 +18,7 @@ final class AppCoordinator {
         set {
             guard newValue != storedSettings else { return }
             let hotkeysChanged = newValue.hotkeys != storedSettings.hotkeys
+                || newValue.videoHotkey != storedSettings.videoHotkey
             storedSettings = newValue
             store.save(newValue)
             if hotkeysChanged { registerHotkeys() }
@@ -25,6 +26,9 @@ final class AppCoordinator {
     }
 
     private(set) var hotkeyErrors: [CaptureMode: HotkeyError] = [:]
+    private(set) var videoHotkeyError: HotkeyError?
+    /// Videoaufnahme (Leiste, Countdown, Menüleistenzustand).
+    let videoRecorder: RecordingCoordinator
     private(set) var lastCapture: Capture?
     /// Modus, dessen Kürzel gerade aufgenommen wird. Währenddessen sind alle globalen Kürzel abgemeldet.
     private(set) var recordingMode: CaptureMode?
@@ -41,20 +45,38 @@ final class AppCoordinator {
     @ObservationIgnored private var recordingObservers: [any NSObjectProtocol] = []
     /// SwiftUI-Aktion zum Öffnen der Einstellungen; das Menüleisten-Menü trägt sie ein.
     @ObservationIgnored var openSettingsAction: OpenSettingsAction?
+    private let settingsLink: SettingsLink
 
     init(store: SettingsStore = SettingsStore(defaults: .standard)) {
         self.store = store
         self.storedSettings = store.load()
         let service = CaptureService()
         self.service = service
-        self.overlay = OverlayController(service: service)
+        let overlay = OverlayController(service: service)
+        self.overlay = overlay
+        let settingsLink = SettingsLink()
+        self.settingsLink = settingsLink
+        self.videoRecorder = RecordingCoordinator(overlay: overlay, link: settingsLink)
         let quickAccess = QuickAccessController { [weak self] in
             self?.settings ?? .defaults(home: FileManager.default.homeDirectoryForCurrentUser)
         }
         self.quickAccess = quickAccess
-        hotkeyCenter = HotkeyCenter { [weak self] mode in
-            guard let self else { return }
-            Task { await self.capture(mode) }
+        hotkeyCenter = HotkeyCenter(
+            handler: { [weak self] mode in
+                guard let self else { return }
+                Task { await self.capture(mode) }
+            },
+            videoHandler: { [weak self] in self?.videoRecorder.toggle() }
+        )
+        settingsLink.get = { [weak self] in
+            self?.settings ?? .defaults(home: FileManager.default.homeDirectoryForCurrentUser)
+        }
+        settingsLink.set = { [weak self] in self?.settings = $0 }
+        settingsLink.notify = { message in Task { await AppCoordinator.postNotification(message) } }
+        settingsLink.openSettings = { [weak self] in self?.showSettings() }
+        // Platzhalter bis zur Vorschaukarte (Task 9): die Datei im Finder zeigen.
+        videoRecorder.onFinished = { result in
+            NSWorkspace.shared.activateFileViewerSelecting([result.url])
         }
         registerHotkeys()
         quickAccess.onEdit = { [weak self] capture in self?.openEditor(for: capture) }
@@ -196,11 +218,16 @@ final class AppCoordinator {
 
     private func registerHotkeys() {
         guard recordingMode == nil, let hotkeyCenter else { return }
-        hotkeyErrors = hotkeyCenter.register(settings.hotkeys)
+        let result = hotkeyCenter.register(settings.hotkeys, video: settings.videoHotkey)
+        hotkeyErrors = result.modes
+        videoHotkeyError = result.video
         for (mode, error) in hotkeyErrors {
             Self.logger.error(
                 "Kürzel für \(mode.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
+        }
+        if let error = videoHotkeyError {
+            Self.logger.error("Kürzel für Video: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -219,7 +246,7 @@ final class AppCoordinator {
     }
 
     /// Fragt die Mitteilungs-Freigabe erst beim ersten Fehler an. Ohne Freigabe bleibt es beim Log.
-    nonisolated private static func postNotification(_ message: String) async {
+    nonisolated static func postNotification(_ message: String) async {
         let center = UNUserNotificationCenter.current()
         let granted: Bool
         do {
