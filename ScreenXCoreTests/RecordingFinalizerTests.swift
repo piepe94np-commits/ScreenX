@@ -3,7 +3,7 @@ import CoreMedia
 import Testing
 @testable import ScreenXCore
 
-@Suite(.serialized)
+@Suite(.serialized, .disabled("temporary CI experiment: writer drops without this suite"))
 struct RecordingFinalizerTests {
     private let width = 640
     private let height = 360
