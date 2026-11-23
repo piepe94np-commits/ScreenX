@@ -1,6 +1,6 @@
 # ScreenX – Bildschirmaufnahme (Video & GIF) – Design
 
-Stand: 2026-11-23 · Status: zur Freigabe · Meilenstein M5
+Stand: 2026-11-23 · Status: freigegeben · Meilenstein M5
 Baut auf: `docs/superpowers/specs/2026-11-03-screenx-design.md` (M1–M4; dort §11 „Bildschirmvideo / GIF-Aufnahme“)
 
 ## 1. Ziel und Warum
