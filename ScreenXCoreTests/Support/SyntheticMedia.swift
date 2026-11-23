@@ -148,7 +148,7 @@ enum SyntheticMedia {
     /// Float32 sine (440 Hz) of `frames` frames starting at sample `startSample` of recording time,
     /// in `format`, without a channel layout.
     static func sineBuffer(startSample: Int64, frames: Int = audioFrames,
-                           format sine: SineFormat = .stereo48k) -> CMSampleBuffer {
+                           format sine: SineFormat = .stereo48k, pts explicitPTS: CMTime? = nil) -> CMSampleBuffer {
         let channels = sine.channels
         let bytesPerFrame = UInt32(sine.interleaved ? 4 * channels : 4)
         var flags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked
@@ -182,7 +182,7 @@ enum SyntheticMedia {
                 with: raw.baseAddress!, blockBuffer: block!, offsetIntoDestination: 0, dataLength: byteCount)
         }
         let rate = Int64(sine.sampleRate)
-        let pts = CMTime(value: baseSeconds * rate + startSample, timescale: CMTimeScale(rate))
+        let pts = explicitPTS ?? CMTime(value: baseSeconds * rate + startSample, timescale: CMTimeScale(rate))
         var sampleBuffer: CMSampleBuffer?
         CMAudioSampleBufferCreateReadyWithPacketDescriptions(
             allocator: kCFAllocatorDefault, dataBuffer: block!, formatDescription: format!,
@@ -193,24 +193,29 @@ enum SyntheticMedia {
 
     /// Feeds frames at `fps` for recording times `start..<end` and, interleaved in time order, sine
     /// buffers for each audio track. With `audioPastEnd` the last audio buffer may cross `end` (it
-    /// straddles a following pause). Paced so the real-time inputs keep up.
+    /// straddles a following pause). `audioDriftPPM` makes the audio host timestamps run that much faster
+    /// (positive) or slower than the sample count, like a drifting device clock. Paced so the real-time
+    /// inputs keep up.
     static func record(
         _ writer: VideoFileWriter, from start: Double, to end: Double, fps: Int,
         audio tracks: [AudioTrackKind] = [], audioFormat sine: SineFormat = .stereo48k,
-        audioPastEnd: Bool = false, frame: (Double) -> CVPixelBuffer
+        audioPastEnd: Bool = false, audioDriftPPM: Double = 0, frame: (Double) -> CVPixelBuffer
     ) async {
         let rate = Double(sine.sampleRate)
+        let drift = 1 + audioDriftPPM / 1_000_000
+        let bufferSeconds = Double(audioFrames) / rate * drift
+        func host(_ sample: Int64) -> Double { Double(sample) / rate * drift }
+        let epsilon = 1e-9
         let frameCount = Int(((end - start) * Double(fps)).rounded())
-        var nextSample = Int64((start * rate).rounded())
-        let lastSample = Int64((end * rate).rounded())
+        var nextSample = Int64((start * rate / drift).rounded())
         for i in 0..<frameCount {
             let t = start + Double(i) / Double(fps)
             writer.appendVideo(frame(t), hostTime: hostTime(t))
-            let frameEndSample = Int64(((t + 1 / Double(fps)) * rate).rounded())
-            while !tracks.isEmpty, nextSample < frameEndSample,
-                  audioPastEnd ? nextSample < lastSample : nextSample + Int64(audioFrames) <= lastSample {
+            while !tracks.isEmpty, host(nextSample) < t + 1 / Double(fps) - epsilon,
+                  audioPastEnd ? host(nextSample) < end - epsilon : host(nextSample) + bufferSeconds <= end + epsilon {
+                let pts = audioDriftPPM == 0 ? nil : hostTime(host(nextSample))
                 for track in tracks {
-                    writer.appendAudio(sineBuffer(startSample: nextSample, format: sine), track: track)
+                    writer.appendAudio(sineBuffer(startSample: nextSample, format: sine, pts: pts), track: track)
                 }
                 nextSample += Int64(audioFrames)
             }

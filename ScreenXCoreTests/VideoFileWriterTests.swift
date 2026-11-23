@@ -309,11 +309,14 @@ struct VideoFileWriterTests {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
         let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: 0))
+        let frames = SyntheticMedia.solidRecording(width: width, height: height)
+        await SyntheticMedia.record(writer, from: 0, to: 0.5, fps: 30, frame: frames)
         #expect(writer.failure == nil)
-        // Finishing without any frame cancels the writer: a reliable failure.
+        // The writer leaves `.writing` behind our back; the next append detects it.
+        writer.simulateWriterFailureForTesting()
         let reported = await withCheckedContinuation { (continuation: CheckedContinuation<VideoWriterError, Never>) in
             writer.onFailure = { continuation.resume(returning: $0) }
-            Task { _ = try? await writer.finish(stopAt: SyntheticMedia.hostTime(1)) }
+            writer.appendVideo(frames(0.6), hostTime: SyntheticMedia.hostTime(0.6))
         }
         #expect(writer.failure == reported)
         await #expect(throws: VideoWriterError.self) {
@@ -328,6 +331,56 @@ struct VideoFileWriterTests {
         await #expect(throws: VideoWriterError.self) {
             _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(1))
         }
+        // Finish errors are thrown only; `failure` reports failures during recording.
+        #expect(writer.failure == nil)
+    }
+
+    /// Records `seconds` of video (10 fps) and microphone audio whose host clock drifts by `ppm`.
+    private func checkDrift(ppm: Double, seconds: Double, endTolerance: Double) async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try VideoFileWriter(url: url, settings: VideoWriterSettings(
+            size: CGSize(width: width, height: height), fps: 10, codec: .h264, bitrate: 500_000, audioTracks: 1))
+        await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 10, audio: [.microphone],
+                                    audioPastEnd: true, audioDriftPPM: ppm,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
+        #expect(writer.failure == nil)
+        expectNoDrops(writer)
+
+        let asset = AVURLAsset(url: out)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        try #require(audio.count == 1)
+        let end = try await audio[0].load(.timeRange).end.seconds
+        print("drift \(ppm) ppm: audio ends at \(end) s, stop \(seconds) s")
+        #expect(abs(end - seconds) <= endTolerance)
+
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: audio[0], outputSettings: nil)
+        reader.add(output)
+        #expect(reader.startReading())
+        var previous: CMTime?
+        var count = 0
+        var nonIncreasing = 0
+        while let sample = output.copyNextSampleBuffer() {
+            let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+            if let previous, CMTimeCompare(pts, previous) <= 0 { nonIncreasing += 1 }
+            previous = pts
+            count += 1
+        }
+        #expect(count > 0)
+        #expect(nonIncreasing == 0)
+    }
+
+    @Test(arguments: [300.0, -300.0])
+    func longDriftingAudioStaysInSyncAndMonotonic(_ ppm: Double) async throws {
+        try await checkDrift(ppm: ppm, seconds: 60, endTolerance: 0.02)
+    }
+
+    /// Strong drift forces resyncs (forward gaps, backward trims) within 30 s.
+    @Test(arguments: [1000.0, -1000.0])
+    func strongDriftResyncsWithoutOverlap(_ ppm: Double) async throws {
+        try await checkDrift(ppm: ppm, seconds: 30, endTolerance: 0.03)
     }
 }
 

@@ -51,27 +51,32 @@ public final class VideoFileWriter: @unchecked Sendable {
     private var timeline = RecordingTimeline()
     private var sessionStarted = false
     private var lastVideoTime: CMTime?
-    private var audioEnds: [CMTime?]
     private var normalizers: [AudioNormalizer]
-    private var videoDrops = 0
-    private var audioDrops = 0
     private var lastDropLog: UInt64?
     private var finishing = false
-    private var recordedFailure: VideoWriterError?
     private var failureHandler: (@Sendable (VideoWriterError) -> Void)?
     private var failureReported = false
+
+    /// Counters and failure, written on the queue and readable from any thread without waiting on it.
+    private struct Statistics {
+        var droppedVideoFrames = 0
+        var droppedAudioBuffers = 0
+        var failure: VideoWriterError?
+    }
+    private let statistics = OSAllocatedUnfairLock(initialState: Statistics())
 
     public init(url: URL, settings: VideoWriterSettings) throws {
         self.url = url
         self.settings = settings
         // Prefer a hard peak data rate so files never get much bigger than the estimate; fall back to the
         // average bit rate alone if the encoder rejects the limit or fails to start with it.
+        let existedBefore = FileManager.default.fileExists(atPath: url.path)
         let parts: Parts
         if let limited = try? Self.makeWriter(url: url, settings: settings, dataRateLimit: true) {
             parts = limited
             usesDataRateLimit = true
         } else {
-            try? FileManager.default.removeItem(at: url)
+            if !existedBefore { try? FileManager.default.removeItem(at: url) }
             parts = try Self.makeWriter(url: url, settings: settings, dataRateLimit: false)
             usesDataRateLimit = false
         }
@@ -79,7 +84,6 @@ public final class VideoFileWriter: @unchecked Sendable {
         videoInput = parts.video
         adaptor = parts.adaptor
         audioInputs = parts.audio
-        audioEnds = Array(repeating: nil, count: parts.audio.count)
         normalizers = parts.audio.map { _ in AudioNormalizer() }
     }
 
@@ -134,6 +138,9 @@ public final class VideoFileWriter: @unchecked Sendable {
         return Parts(writer: writer, video: video, adaptor: adaptor, audio: audio)
     }
 
+    // The getters below read a lock-protected mirror or the file system, never waiting on the writer
+    // queue, so the UI may poll them.
+
     /// Current size of the output file in bytes.
     public var bytesWritten: Int64 {
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber
@@ -141,15 +148,17 @@ public final class VideoFileWriter: @unchecked Sendable {
     }
 
     /// Video frames dropped because the input was not ready for more data.
-    public var droppedVideoFrames: Int { queue.sync { videoDrops } }
+    public var droppedVideoFrames: Int { statistics.withLock { $0.droppedVideoFrames } }
 
-    /// Audio buffers dropped: input not ready, overlapping a previous buffer, or not convertible.
-    public var droppedAudioBuffers: Int { queue.sync { audioDrops } }
+    /// Audio buffers dropped: input not ready, fully covered by earlier output, or not convertible.
+    public var droppedAudioBuffers: Int { statistics.withLock { $0.droppedAudioBuffers } }
 
-    /// The first failure of the underlying writer (status left `.writing`, or an append failed).
-    public var failure: VideoWriterError? { queue.sync { recordedFailure } }
+    /// The first failure of the underlying writer during recording: its status left `.writing` or an
+    /// append failed. A status change is detected on the next append. Errors of `finish` are only thrown.
+    public var failure: VideoWriterError? { statistics.withLock { $0.failure } }
 
-    /// Called once, on a background queue, when `failure` is first set.
+    /// Called once, on a background queue, when `failure` is first set (failures during recording only;
+    /// `finish` throws instead). Getting or setting it synchronises with the writer queue.
     public var onFailure: (@Sendable (VideoWriterError) -> Void)? {
         get { queue.sync { failureHandler } }
         set {
@@ -192,6 +201,11 @@ public final class VideoFileWriter: @unchecked Sendable {
         }
     }
 
+    /// Test hook: cancels the underlying writer as if it had failed; detected on the next append.
+    func simulateWriterFailureForTesting() {
+        queue.sync { writer.cancelWriting() }
+    }
+
     // MARK: - Queue-confined
 
     /// True while the writer accepts data; records a failure once its status has left `.writing`.
@@ -212,7 +226,7 @@ public final class VideoFileWriter: @unchecked Sendable {
             sessionStarted = true
         }
         guard videoInput.isReadyForMoreMediaData else {
-            videoDrops += 1
+            statistics.withLock { $0.droppedVideoFrames += 1 }
             logDrop()
             return
         }
@@ -231,29 +245,26 @@ public final class VideoFileWriter: @unchecked Sendable {
         var duration = CMSampleBufferGetDuration(sampleBuffer)
         if !duration.isValid { duration = .zero }
         guard let time = timeline.audio(at: hostTime, duration: duration), sessionStarted else { return }
-        // A buffer that straddled a pause start overlaps the first one after resuming; small overlaps
-        // (up to half a buffer) are absorbed by the normalizer's continuous output timing.
-        if let end = audioEnds[index],
-           CMTimeCompare(time, CMTimeSubtract(end, CMTimeMultiplyByRatio(duration, multiplier: 1, divisor: 2))) < 0 {
-            audioDrops += 1
-            logDrop()
-            return
-        }
         let input = audioInputs[index]
         guard input.isReadyForMoreMediaData else {
-            audioDrops += 1
-            logDrop()
+            dropAudio(track: index)
             return
         }
-        guard let converted = normalizers[index].convert(sampleBuffer, at: time) else {
-            audioDrops += 1
-            logDrop()
-            return
+        switch normalizers[index].convert(sampleBuffer, at: time) {
+        case .buffer(let converted):
+            if !input.append(converted) { recordFailure(writerError()) }
+        case .empty:
+            break
+        case .covered, .failed:
+            dropAudio(track: index)
         }
-        audioEnds[index] = CMTimeAdd(time, duration)
-        if !input.append(converted) {
-            recordFailure(writerError())
-        }
+    }
+
+    /// Counts and logs an audio drop and lets the track's normalizer resync on its next buffer.
+    private func dropAudio(track index: Int) {
+        statistics.withLock { $0.droppedAudioBuffers += 1 }
+        normalizers[index].noteDrop()
+        logDrop()
     }
 
     private func finishOnQueue(stopAt hostTime: CMTime, continuation: CheckedContinuation<URL, Error>) {
@@ -264,17 +275,14 @@ public final class VideoFileWriter: @unchecked Sendable {
         }
         guard writer.status == .writing else {
             finishing = true
-            let error = writerError()
-            recordFailure(error)
-            continuation.resume(throwing: error)
+            continuation.resume(throwing: writerError())
             return
         }
         finishing = true
         guard sessionStarted, let lastVideoTime else {
             writer.cancelWriting()
-            let error = VideoWriterError.writerFailed(String(localized: "Es wurden keine Bilder aufgenommen."))
-            recordFailure(error)
-            continuation.resume(throwing: error)
+            continuation.resume(throwing: VideoWriterError.writerFailed(
+                String(localized: "Es wurden keine Bilder aufgenommen.")))
             return
         }
         var end = timeline.outputTime(forStopAt: hostTime)
@@ -287,9 +295,7 @@ public final class VideoFileWriter: @unchecked Sendable {
                 if self.writer.status == .completed {
                     continuation.resume(returning: self.url)
                 } else {
-                    let error = self.writerError()
-                    self.recordFailure(error)
-                    continuation.resume(throwing: error)
+                    continuation.resume(throwing: self.writerError())
                 }
             }
         }
@@ -300,14 +306,18 @@ public final class VideoFileWriter: @unchecked Sendable {
     }
 
     private func recordFailure(_ error: VideoWriterError) {
-        guard recordedFailure == nil else { return }
-        recordedFailure = error
+        let isFirst = statistics.withLock { stats in
+            guard stats.failure == nil else { return false }
+            stats.failure = error
+            return true
+        }
+        guard isFirst else { return }
         Self.log.error("Writer failed: \(error.localizedDescription, privacy: .public)")
         reportFailureIfNeeded()
     }
 
     private func reportFailureIfNeeded() {
-        guard !failureReported, let error = recordedFailure, let handler = failureHandler else { return }
+        guard !failureReported, let error = statistics.withLock({ $0.failure }), let handler = failureHandler else { return }
         failureReported = true
         DispatchQueue.global().async { handler(error) }
     }
@@ -317,31 +327,54 @@ public final class VideoFileWriter: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         if let lastDropLog, now - lastDropLog < 1_000_000_000 { return }
         lastDropLog = now
+        let stats = statistics.withLock { $0 }
         Self.log.notice(
-            "Dropped buffers so far: \(self.videoDrops, privacy: .public) video, \(self.audioDrops, privacy: .public) audio")
+            "Dropped buffers so far: \(stats.droppedVideoFrames, privacy: .public) video, \(stats.droppedAudioBuffers, privacy: .public) audio")
     }
 }
 
 /// Converts one track's incoming audio (any linear PCM format, possibly changing mid-stream, e.g. after
-/// a microphone switch) to interleaved float32 48 kHz stereo with continuous output timestamps.
-/// Confined to the writer queue.
+/// a microphone switch) to interleaved float32 48 kHz stereo. Confined to the writer queue.
+///
+/// Timing: output runs continuously by sample count, so the audio has no steps while the device clock
+/// and the host clock agree. When they drift apart by more than `resyncThreshold` (20–200 ppm of device
+/// drift reaches that after minutes), after a drop, or across a pause gap, the output restarts at the
+/// buffer's host-derived time. A forward resync leaves a gap of at most the threshold; a backward one
+/// trims the converted buffer's leading frames so no output starts before the previous output end
+/// (a buffer that is fully covered is dropped). The sync error therefore stays below 20 ms.
 private final class AudioNormalizer {
+    enum Result {
+        case buffer(CMSampleBuffer)
+        /// The converter produced no frames yet (not a drop).
+        case empty
+        /// Fully covered by earlier output; dropped.
+        case covered
+        case failed
+    }
+
     private let outputFormat = VideoWriterSettings.normalizedAudioFormat()
     private var converter: AVAudioConverter?
     private var inputDescription: CMFormatDescription?
     private var inputFormat: AVAudioFormat?
-    /// Output time right after the last converted buffer.
+    /// Output time at which the next converted frames continue.
     private var nextTime: CMTime?
-    /// Beyond this gap between expected and actual input time the stream restarts (dropped buffers).
-    private static let resyncThreshold = CMTime(value: 50, timescale: 1000)
+    /// End of the last emitted output; nothing may start before it.
+    private var outputEnd: CMTime?
+    private var needsResync = false
+    private static let resyncThreshold = CMTime(value: 20, timescale: 1000)
 
-    /// Converts `sampleBuffer`, whose start maps to output time `time`; `nil` if it cannot be converted.
-    func convert(_ sampleBuffer: CMSampleBuffer, at time: CMTime) -> CMSampleBuffer? {
-        guard let description = CMSampleBufferGetFormatDescription(sampleBuffer) else { return nil }
+    /// A buffer of this track was dropped: restart timing at the next buffer.
+    func noteDrop() {
+        needsResync = true
+    }
+
+    /// Converts `sampleBuffer`, whose start maps to output time `time`.
+    func convert(_ sampleBuffer: CMSampleBuffer, at time: CMTime) -> Result {
+        guard let description = CMSampleBufferGetFormatDescription(sampleBuffer) else { return .failed }
         if inputDescription.map({ !CMFormatDescriptionEqual($0, otherFormatDescription: description) }) ?? true {
             guard let format = Self.audioFormat(of: description),
                   let converter = AVAudioConverter(from: format, to: outputFormat) else {
-                return nil
+                return .failed
             }
             converter.primeMethod = .none
             converter.downmix = format.channelCount > outputFormat.channelCount
@@ -350,25 +383,31 @@ private final class AudioNormalizer {
             inputFormat = format
             inputDescription = description
         }
-        guard let converter, let inputFormat else { return nil }
-        if let expected = nextTime,
-           CMTimeCompare(CMTimeAbsoluteValue(CMTimeSubtract(time, expected)), Self.resyncThreshold) > 0 {
+        guard let converter, let inputFormat else { return .failed }
+        if needsResync || nextTime.map({
+            CMTimeCompare(CMTimeAbsoluteValue(CMTimeSubtract(time, $0)), Self.resyncThreshold) > 0
+        }) ?? true {
             converter.reset()
-            nextTime = nil
+            nextTime = time
+            needsResync = false
         }
 
         let frames = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
         guard frames > 0, let input = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frames) else {
-            return nil
+            return .failed
         }
-        guard Self.copyPCM(from: sampleBuffer, into: input) else { return nil }
+        guard Self.copyPCM(from: sampleBuffer, into: input) else { return .failed }
         input.frameLength = frames
 
         let capacity = AVAudioFrameCount(
             (Double(frames) * outputFormat.sampleRate / inputFormat.sampleRate).rounded(.up)) + 32
-        guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else { return nil }
+        guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: capacity) else {
+            return .failed
+        }
         let pending = PendingInput(buffer: input)
         var error: NSError?
+        // Mid-stream the block answers `.noDataNow`, never `.endOfStream`: that would end the converter's
+        // stream. Flushing the resampler's tail at the very end is not needed.
         let status = converter.convert(to: output, error: &error) { _, inputStatus in
             guard let buffer = pending.take() else {
                 inputStatus.pointee = .noDataNow
@@ -377,12 +416,26 @@ private final class AudioNormalizer {
             inputStatus.pointee = .haveData
             return buffer
         }
-        guard status != .error, output.frameLength > 0 else { return nil }
+        guard status != .error else { return .failed }
+        guard output.frameLength > 0, var start = nextTime else { return .empty }
 
-        let start = nextTime ?? time
-        nextTime = CMTimeAdd(start, CMTime(value: CMTimeValue(output.frameLength),
-                                           timescale: CMTimeScale(outputFormat.sampleRate)))
-        return Self.sampleBuffer(from: output, at: start)
+        let rate = CMTimeScale(outputFormat.sampleRate)
+        let produced = CMTime(value: CMTimeValue(output.frameLength), timescale: rate)
+        var skip: AVAudioFrameCount = 0
+        if let outputEnd, CMTimeCompare(start, outputEnd) < 0 {
+            let overlap = CMTimeSubtract(outputEnd, start).seconds * outputFormat.sampleRate
+            guard overlap < Double(output.frameLength) else {
+                nextTime = CMTimeAdd(start, produced)
+                return .covered
+            }
+            skip = AVAudioFrameCount(overlap.rounded(.up))
+            start = outputEnd
+        }
+        let end = CMTimeAdd(start, CMTime(value: CMTimeValue(output.frameLength - skip), timescale: rate))
+        guard let result = Self.sampleBuffer(from: output, skipping: skip, at: start) else { return .failed }
+        nextTime = end
+        outputEnd = end
+        return .buffer(result)
     }
 
     /// The input format; buffers with more than two channels and no layout get a discrete layout.
@@ -430,11 +483,15 @@ private final class AudioNormalizer {
         return withExtendedLifetime(blockBuffer) { true }
     }
 
-    /// Wraps interleaved PCM in a ready `CMSampleBuffer` starting at `time`.
-    private static func sampleBuffer(from buffer: AVAudioPCMBuffer, at time: CMTime) -> CMSampleBuffer? {
+    /// Wraps interleaved PCM, without its first `skip` frames, in a ready `CMSampleBuffer` starting at `time`.
+    private static func sampleBuffer(from buffer: AVAudioPCMBuffer, skipping skip: AVAudioFrameCount,
+                                     at time: CMTime) -> CMSampleBuffer? {
         let list = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
-        guard list.count == 1, let data = list[0].mData else { return nil }
-        let byteCount = Int(buffer.frameLength * buffer.format.streamDescription.pointee.mBytesPerFrame)
+        guard list.count == 1, let base = list[0].mData, skip < buffer.frameLength else { return nil }
+        let bytesPerFrame = Int(buffer.format.streamDescription.pointee.mBytesPerFrame)
+        let data = base + Int(skip) * bytesPerFrame
+        let frameCount = buffer.frameLength - skip
+        let byteCount = Int(frameCount) * bytesPerFrame
         var block: CMBlockBuffer?
         guard CMBlockBufferCreateWithMemoryBlock(
             allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount,
@@ -447,7 +504,7 @@ private final class AudioNormalizer {
         var sampleBuffer: CMSampleBuffer?
         guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
             allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: buffer.format.formatDescription,
-            sampleCount: CMItemCount(buffer.frameLength), presentationTimeStamp: time,
+            sampleCount: CMItemCount(frameCount), presentationTimeStamp: time,
             packetDescriptions: nil, sampleBufferOut: &sampleBuffer) == noErr
         else { return nil }
         return sampleBuffer
