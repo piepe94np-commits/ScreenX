@@ -342,7 +342,7 @@ struct VideoFileWriterTests {
         let writer = try VideoFileWriter(url: url, settings: VideoWriterSettings(
             size: CGSize(width: width, height: height), fps: 10, codec: .h264, bitrate: 500_000, audioTracks: 1))
         await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 10, audio: [.microphone],
-                                    audioPastEnd: true, audioDriftPPM: ppm,
+                                    audioPastEnd: true, audioDriftPPM: ppm, frameDelay: .milliseconds(10),
                                     frame: SyntheticMedia.solidRecording(width: width, height: height))
         let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
         #expect(writer.failure == nil)
@@ -359,16 +359,18 @@ struct VideoFileWriterTests {
         let output = AVAssetReaderTrackOutput(track: audio[0], outputSettings: nil)
         reader.add(output)
         #expect(reader.startReading())
-        var previous: CMTime?
+        // Passthrough AAC comes in chunks of packets; marker buffers without samples carry no timing.
+        var previousEnd: CMTime?
         var count = 0
         var violations: [String] = []
+        let tolerance = CMTime(value: 1, timescale: 48_000)
         while let sample = output.copyNextSampleBuffer() {
             let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-            if let previous, CMTimeCompare(pts, previous) <= 0 {
-                violations.append("#\(count): \(previous.seconds) -> \(pts.seconds), "
-                                  + "samples \(CMSampleBufferGetNumSamples(sample))")
+            guard CMSampleBufferGetNumSamples(sample) > 0, pts.isValid else { continue }
+            if let previousEnd, CMTimeCompare(pts, CMTimeSubtract(previousEnd, tolerance)) < 0 {
+                violations.append("#\(count): starts \(pts.seconds) before previous end \(previousEnd.seconds)")
             }
-            previous = pts
+            previousEnd = CMTimeAdd(pts, CMSampleBufferGetDuration(sample))
             count += 1
         }
         #expect(count > 0)

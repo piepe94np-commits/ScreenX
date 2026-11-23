@@ -199,7 +199,8 @@ enum SyntheticMedia {
     static func record(
         _ writer: VideoFileWriter, from start: Double, to end: Double, fps: Int,
         audio tracks: [AudioTrackKind] = [], audioFormat sine: SineFormat = .stereo48k,
-        audioPastEnd: Bool = false, audioDriftPPM: Double = 0, frame: (Double) -> CVPixelBuffer
+        audioPastEnd: Bool = false, audioDriftPPM: Double = 0, frameDelay: Duration = .milliseconds(3),
+        frame: (Double) -> CVPixelBuffer
     ) async {
         let rate = Double(sine.sampleRate)
         let drift = 1 + audioDriftPPM / 1_000_000
@@ -220,7 +221,7 @@ enum SyntheticMedia {
                 nextSample += Int64(audioFrames)
             }
             // Frames come about ten times faster than real time; give the encoder time to spin up first.
-            try? await Task.sleep(for: .milliseconds(i == 0 ? 200 : 3))
+            try? await Task.sleep(for: i == 0 ? .milliseconds(200) : frameDelay)
         }
     }
 
