@@ -61,6 +61,7 @@ final class ClickHighlighter {
         let local = CGPoint(x: point.x - window.frame.minX, y: point.y - window.frame.minY)
         let size = Self.diameter
         let circle = CAShapeLayer()
+        circle.contentsScale = window.backingScaleFactor
         circle.frame = CGRect(x: local.x - size / 2, y: local.y - size / 2, width: size, height: size)
         circle.path = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: size, height: size), transform: nil)
         circle.fillColor = RecordingColors.red.withAlphaComponent(0.35).cgColor
