@@ -90,11 +90,11 @@ struct RecordingFinalizerTests {
         #expect(abs(duration - 2) <= 0.1)
     }
 
-    /// A crash: the writer records 25 s in real time and never finishes. The file a crash leaves behind
+    /// A crash: the writer writes 25 s of recording and never finishes. The file a crash leaves behind
     /// is the `.mov` exactly as it is on disk at that moment, so the test takes a copy of it while the
-    /// writer is still running. Afterwards the writer finishes its own (live) file normally: a writer that
-    /// is dropped or cancelled without `finish` left the encoder slowed down for the following writer
-    /// tests on CI (dropped frames in four runs in a row; green without this test).
+    /// writer is still running, then lets the writer finish its own live file only to release the encoder.
+    /// (A writer dropped without `finish` while recording in real time was followed by encoder frame drops
+    /// in later writer tests on CI; see the task report.)
     @Test func unfinishedMovIsReadableAndFinalizes() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -118,9 +118,8 @@ struct RecordingFinalizerTests {
         #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
     }
 
-    /// Records in (about) real time, so fragments are written as in a real recording, copies the unfinished
-    /// file to `crashed` (the state a crash leaves on disk), then finishes the live file only to release
-    /// the encoder; the copy is never touched by the writer again.
+    /// Writes `seconds` of recording (faster than real time: the fragment interval counts recording time),
+    /// copies the unfinished file to `crashed`, then finishes the live file; the copy is never touched again.
     private func recordCrashedFile(to crashed: URL, seconds: Double) async throws {
         let live = FileManager.default.temporaryDirectory.appendingPathComponent("ScreenXLive-\(UUID().uuidString).mov")
         defer { try? FileManager.default.removeItem(at: live) }
