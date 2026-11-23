@@ -374,9 +374,8 @@ struct VideoFileWriterTests {
         let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
         #expect(writer.failure == nil)
         #expect(writer.droppedAudioBuffers == 0)
-        // This test is about audio; a few video frames dropped while the encoder starts are accepted
-        // (production policy), as seen on the CI VMs.
-        #expect(writer.droppedVideoFrames <= 20)
+        // This test is about audio; it feeds video ten times faster than real time, so dropped video
+        // frames on the CI VM say nothing about the writer and are not checked here.
 
         let asset = AVURLAsset(url: out)
         let audio = try await asset.loadTracks(withMediaType: .audio)
