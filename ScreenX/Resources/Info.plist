@@ -60,6 +60,8 @@
 			</dict>
 		</dict>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ScreenX nimmt bei Videoaufnahmen auf Wunsch dein Mikrofon auf.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>ScreenX benötigt Zugriff auf die Bildschirmaufnahme, um Screenshots zu erstellen.</string>
 </dict>

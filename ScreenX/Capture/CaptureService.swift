@@ -41,13 +41,7 @@ actor CaptureService {
             throw CaptureError.displayNotFound
         }
         // Eigene Fenster (Schnellzugriff, Einstellungen, Hinweise) dürfen nie im Bild landen.
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let filter: SCContentFilter
-        if let own = content.applications.first(where: { $0.processID == ownPID }) {
-            filter = SCContentFilter(display: display, excludingApplications: [own], exceptingWindows: [])
-        } else {
-            filter = SCContentFilter(display: display, excludingWindows: [])
-        }
+        let filter = Self.displayFilterExcludingScreenX(display: display, content: content)
         let scale = CGFloat(filter.pointPixelScale)
         let config = SCStreamConfiguration()
         config.width = Int((CGFloat(display.width) * scale).rounded())
@@ -96,6 +90,22 @@ actor CaptureService {
     }
 
     // MARK: - Hilfen
+
+    /// Filter für einen ganzen Monitor ohne die Fenster von ScreenX. `exceptingWindowIDs` sind eigene
+    /// Fenster, die trotzdem ins Bild sollen (Klick-Kreise); Apps mit einer Bundle-ID aus
+    /// `excludingBundleIDs` werden zusätzlich ausgeschlossen (z. B. Mitteilungen).
+    static func displayFilterExcludingScreenX(
+        display: SCDisplay, content: SCShareableContent,
+        exceptingWindowIDs: [CGWindowID] = [], excludingBundleIDs: Set<String> = []
+    ) -> SCContentFilter {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let excluded = content.applications.filter {
+            $0.processID == ownPID || excludingBundleIDs.contains($0.bundleIdentifier)
+        }
+        guard !excluded.isEmpty else { return SCContentFilter(display: display, excludingWindows: []) }
+        let excepted = content.windows.filter { exceptingWindowIDs.contains($0.windowID) }
+        return SCContentFilter(display: display, excludingApplications: excluded, exceptingWindows: excepted)
+    }
 
     /// Monitore laut `NSScreen` (nur auf dem Main Actor verfügbar).
     @MainActor

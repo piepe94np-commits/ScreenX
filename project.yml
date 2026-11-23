@@ -19,6 +19,7 @@ targets:
         INFOPLIST_FILE: ScreenX/Resources/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.screenx.app
         ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: ScreenX/Resources/ScreenX.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: ScreenXCore

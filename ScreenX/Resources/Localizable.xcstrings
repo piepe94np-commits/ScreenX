@@ -288,7 +288,15 @@
     "Der gewählte Bereich liegt außerhalb des Videos." : {},
     "Die Datei enthält kein Video." : {},
     "Ein Bild des Videos konnte nicht gelesen werden: %@" : {},
-    "Das GIF konnte nicht gespeichert werden: %@" : {}
+    "Das GIF konnte nicht gespeichert werden: %@" : {},
+    "Es läuft bereits eine Aufnahme." : {},
+    "Das Mikrofon ist nicht freigegeben. Die Aufnahme läuft ohne Mikrofon." : {},
+    "Es läuft keine Aufnahme." : {},
+    "Ein Teil des Tons ging verloren (%lld Abschnitte)." : {},
+    "Die MP4-Datei konnte nicht erstellt werden, die MOV-Datei bleibt erhalten: %@" : {},
+    "Das GIF konnte nicht erstellt werden, das Video bleibt erhalten: %@" : {},
+    "Der Systemton ist ausgefallen. Die Aufnahme lief ohne Systemton weiter." : {},
+    "Der Systemton konnte nicht aufgenommen werden. Die Aufnahme läuft ohne Systemton." : {}
   },
   "version" : "1.0"
 }
