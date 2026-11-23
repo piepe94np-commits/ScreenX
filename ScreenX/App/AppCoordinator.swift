@@ -74,16 +74,47 @@ final class AppCoordinator {
         settingsLink.set = { [weak self] in self?.settings = $0 }
         settingsLink.notify = { message in Task { await AppCoordinator.postNotification(message) } }
         settingsLink.openSettings = { [weak self] in self?.showSettings() }
-        // Platzhalter bis zur Vorschaukarte (Task 9): die Datei im Finder zeigen.
-        videoRecorder.onFinished = { result in
-            NSWorkspace.shared.activateFileViewerSelecting([result.url])
-        }
+        videoRecorder.onFinished = { [weak quickAccess] result in quickAccess?.show(recording: result) }
+        TrimWindow.onResult = { [weak quickAccess] result in quickAccess?.show(recording: result) }
         registerHotkeys()
         quickAccess.onEdit = { [weak self] capture in self?.openEditor(for: capture) }
         // Editor und Coordinator teilen dieselben Einstellungen.
         EditorWindowController.settingsSource = Bindable(self).settings
         EditorWindowController.settingsOpener = { [weak self] in self?.showSettings() }
         Task { @MainActor in ScreenPermission.requestAtLaunch() }
+        Task { @MainActor [weak self] in self?.offerLeftoverRecovery() }
+    }
+
+    // MARK: - Unvollständige Aufnahmen
+
+    /// Sucht beim Start nach `.mov`-Resten im Speicherort (z. B. nach einem Absturz) und bietet an,
+    /// sie fertigzustellen. Das läuft im Hintergrund; danach erscheint je Datei eine Karte.
+    private func offerLeftoverRecovery() {
+        let leftovers = RecordingFinalizer.leftovers(in: settings.saveDirectory)
+        guard !leftovers.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Unvollständige Aufnahme gefunden")
+        alert.informativeText = leftovers.map(\.lastPathComponent).joined(separator: "\n")
+        alert.addButton(withTitle: String(localized: "Fertigstellen"))
+        alert.addButton(withTitle: String(localized: "Später"))
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { [weak self] in
+            for mov in leftovers {
+                do {
+                    let url = try await RecordingFinalizer.finalize(mov: mov)
+                    let duration = await VideoFileInfo.info(url: url)?.duration ?? 0
+                    self?.quickAccess?.show(recording: RecordingResult(
+                        url: url, duration: duration, size: VideoFileInfo.fileSize(url), warnings: []
+                    ))
+                } catch {
+                    Self.logger.error(
+                        "Fertigstellen fehlgeschlagen: \(mov.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                    )
+                    await Self.postNotification(error.localizedDescription)
+                }
+            }
+        }
     }
 
     // MARK: - Aufnahme

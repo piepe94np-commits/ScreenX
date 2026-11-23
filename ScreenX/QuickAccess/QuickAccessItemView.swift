@@ -153,10 +153,22 @@ struct QuickAccessItemView: View {
     }
 
     private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
+        QuickAccessButton.action(title, action: action)
+    }
+
+    private func circleButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        QuickAccessButton.circle(symbol, label: label, action: action)
+    }
+}
+
+/// Knöpfe der Schnellzugriffs-Karten (Bild- und Videokarte).
+@MainActor
+enum QuickAccessButton {
+    static func action(_ title: String, tint: Color = .black, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.black)
+                .foregroundStyle(tint)
                 .frame(width: 120, height: 28)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -167,7 +179,7 @@ struct QuickAccessItemView: View {
         .buttonStyle(.plain)
     }
 
-    private func circleButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+    static func circle(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 9, weight: .bold))
@@ -185,7 +197,7 @@ struct QuickAccessItemView: View {
 
 /// Hosting-View mit eigener Hover-Erkennung über der Kartenfläche.
 /// `.activeAlways`, weil ScreenX beim Anzeigen nie aktiv ist (das Panel aktiviert die App nicht).
-final class QuickAccessHostingView: NSHostingView<QuickAccessItemView> {
+final class QuickAccessHostingView<Content: View>: NSHostingView<Content> {
     var onHover: ((Bool) -> Void)?
     private var hoverArea: NSTrackingArea?
 

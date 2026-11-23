@@ -366,7 +366,27 @@
     "Video" : {},
     "Video (MP4)" : {},
     "%@ Kopie" : {},
-    "%lld fps" : {}
+    "%lld fps" : {},
+    "Öffnen" : {},
+    "Kürzen" : {},
+    "Im Finder" : {},
+    "Löschen fehlgeschlagen" : {},
+    "Auswahl %@ – %@ · Länge %@ · ≈ %@" : {},
+    "Original ersetzen" : {},
+    "Als GIF …" : {},
+    "Kürzen fehlgeschlagen" : {},
+    "Das Original konnte nicht ersetzt werden. Die gekürzte Datei heißt „%@“." : {},
+    "Als GIF exportieren" : {},
+    "Breite" : {},
+    "8 fps" : {},
+    "Endlosschleife" : {},
+    "Exportieren" : {},
+    "≈ %@ MB" : {},
+    "⚠︎ ≈ %@ MB – GIF wird groß. Kürzer, kleiner oder als Video teilen?" : {},
+    "GIF-Export fehlgeschlagen" : {},
+    "Unvollständige Aufnahme gefunden" : {},
+    "Fertigstellen" : {},
+    "Später" : {}
   },
   "version" : "1.0"
 }
