@@ -140,7 +140,8 @@ public enum RecordingFinalizer {
         } catch {
             throw RecordingFinalizerError.writeFailed(error.localizedDescription)
         }
-        writer.shouldOptimizeForNetworkUse = true
+        // No "fast start" rewrite: it leaves a hidden `.sb-…` helper file next to the output on finish.
+        writer.shouldOptimizeForNetworkUse = false
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: formatHint)
         videoInput.transform = transform
         guard writer.canAdd(videoInput) else { throw RecordingFinalizerError.writeFailed(unknown) }
