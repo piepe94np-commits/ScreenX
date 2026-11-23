@@ -193,7 +193,7 @@ enum SyntheticMedia {
 
     /// Feeds frames at `fps` for recording times `start..<end` and, interleaved in time order, sine
     /// buffers for each audio track. With `audioPastEnd` the last audio buffer may cross `end` (it
-    /// straddles a following pause). Paced slightly so the real-time inputs keep up.
+    /// straddles a following pause). Paced so the real-time inputs keep up.
     static func record(
         _ writer: VideoFileWriter, from start: Double, to end: Double, fps: Int,
         audio tracks: [AudioTrackKind] = [], audioFormat sine: SineFormat = .stereo48k,
@@ -214,7 +214,8 @@ enum SyntheticMedia {
                 }
                 nextSample += Int64(audioFrames)
             }
-            try? await Task.sleep(for: .milliseconds(3))
+            // Frames come about ten times faster than real time; give the encoder time to spin up first.
+            try? await Task.sleep(for: .milliseconds(i == 0 ? 200 : 3))
         }
     }
 
