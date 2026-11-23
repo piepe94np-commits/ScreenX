@@ -54,6 +54,21 @@ enum SyntheticMedia {
         }
     }
 
+    /// Gray noise made of `block`×`block` cells, shifted left by `offset` pixels (a scrolling detailed screen).
+    static func blockNoiseFrame(width: Int, height: Int, block: Int, offset: Int, seed: UInt64 = 1) -> CVPixelBuffer {
+        pixelBuffer(width: width, height: height) { row, y in
+            for x in 0..<width {
+                var h = UInt64((x + offset) / block) &* 0x9E37_79B9_7F4A_7C15
+                    ^ UInt64(y / block) &* 0xC2B2_AE3D_27D4_EB4F ^ seed
+                h ^= h >> 29
+                h = h &* 0xBF58_476D_1CE4_E5B9
+                h ^= h >> 32
+                let g = UInt32(h & 0xFF)
+                row[x] = g | g << 8 | g << 16 | 0xFF00_0000
+            }
+        }
+    }
+
     private static func pixelBuffer(
         width: Int, height: Int, fillRow: (UnsafeMutablePointer<UInt32>, Int) -> Void
     ) -> CVPixelBuffer {
