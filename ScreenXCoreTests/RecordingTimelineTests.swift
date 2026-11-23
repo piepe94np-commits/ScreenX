@@ -26,7 +26,7 @@ struct RecordingTimelineTests {
         #expect(tl.video(at: t(21)) == t(3))
         #expect(tl.audio(at: t(21), duration: dur) == t(3))
         #expect(tl.outputTime(forStopAt: t(23)) == t(5))
-        #expect(tl.activeDuration >= t(4))
+        #expect(tl.activeDuration == t(3.021))  // up to the end of the last audio buffer
     }
 
     @Test func audioBeforeFirstFrameDroppedAndAligned() {
@@ -43,7 +43,7 @@ struct RecordingTimelineTests {
         tl.pause(at: t(12))
         tl.resume(at: t(20))
         #expect(tl.audio(at: t(19.99), duration: dur) == nil)
-        #expect(tl.audio(at: t(20), duration: dur) == .zero)
+        #expect(tl.audio(at: t(20), duration: dur) == t(2))  // 10...12 was active, 12...20 paused
     }
 
     @Test func multiplePauses() {
@@ -56,7 +56,7 @@ struct RecordingTimelineTests {
         tl.resume(at: t(10))  // 2 s paused
         #expect(tl.video(at: t(11)) == t(6))
         #expect(tl.outputTime(forStopAt: t(12)) == t(7))
-        #expect(tl.activeDuration == t(7))
+        #expect(tl.activeDuration == t(6))  // up to the last frame seen
     }
 
     @Test func pauseWhilePausedIsNoOp() {
