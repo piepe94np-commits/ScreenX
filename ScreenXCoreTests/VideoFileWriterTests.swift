@@ -355,7 +355,9 @@ struct VideoFileWriterTests {
         let audio = try await asset.loadTracks(withMediaType: .audio)
         try #require(audio.count == 1)
         let end = try await audio[0].load(.timeRange).end.seconds
-        print("drift \(ppm) ppm: audio ends at \(end) s, stop \(seconds) s")
+        let corrections = writer.audioTimingCorrections
+        print("drift \(ppm) ppm: audio ends at \(end) s, stop \(seconds) s, corrections \(corrections)")
+        if abs(ppm) * seconds / 1_000_000 > 0.021 { #expect(corrections.resyncs > 0) }
         #expect(abs(end - seconds) <= endTolerance)
 
         let reader = try AVAssetReader(asset: asset)
@@ -388,7 +390,7 @@ struct VideoFileWriterTests {
     /// Strong drift forces resyncs (forward gaps, backward trims) within 30 s.
     @Test(arguments: [1000.0, -1000.0])
     func strongDriftResyncsWithoutOverlap(_ ppm: Double) async throws {
-        try await checkDrift(ppm: ppm, seconds: 30, endTolerance: 0.03)
+        try await checkDrift(ppm: ppm, seconds: 30, endTolerance: 0.02)
     }
 }
 
