@@ -57,7 +57,8 @@ struct RecordingFinalizerTests {
 
         #expect(mp4 == RecordingFinalizer.finalURL(for: mov))
         #expect(!FileManager.default.fileExists(atPath: mov.path))
-        #expect(try fileNames(in: directory) == [mp4.lastPathComponent])
+        let remaining = try fileNames(in: directory)
+        #expect(remaining == [mp4.lastPathComponent])
         let asset = AVURLAsset(url: mp4)
         let duration = try await asset.load(.duration).seconds
         #expect(abs(duration - movDuration) <= 0.1)
@@ -153,6 +154,7 @@ struct RecordingFinalizerTests {
         }
 
         #expect(FileManager.default.fileExists(atPath: mov.path))
-        #expect(try fileNames(in: directory) == [mov.lastPathComponent])
+        let remaining = try fileNames(in: directory)
+        #expect(remaining == [mov.lastPathComponent])
     }
 }
