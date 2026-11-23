@@ -361,15 +361,18 @@ struct VideoFileWriterTests {
         #expect(reader.startReading())
         var previous: CMTime?
         var count = 0
-        var nonIncreasing = 0
+        var violations: [String] = []
         while let sample = output.copyNextSampleBuffer() {
             let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-            if let previous, CMTimeCompare(pts, previous) <= 0 { nonIncreasing += 1 }
+            if let previous, CMTimeCompare(pts, previous) <= 0 {
+                violations.append("#\(count): \(previous.seconds) -> \(pts.seconds), "
+                                  + "samples \(CMSampleBufferGetNumSamples(sample))")
+            }
             previous = pts
             count += 1
         }
         #expect(count > 0)
-        #expect(nonIncreasing == 0)
+        #expect(violations.isEmpty, "\(violations)")
     }
 
     @Test(arguments: [300.0, -300.0])
