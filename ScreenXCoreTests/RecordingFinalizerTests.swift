@@ -19,25 +19,28 @@ struct RecordingFinalizerTests {
         try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
     }
 
-    private func settings(audioTracks: Int, width: Int = 640, height: Int = 360, fps: Int = 30) -> VideoWriterSettings {
-        VideoWriterSettings(size: CGSize(width: width, height: height), fps: fps, codec: .h264,
+    private func settings(audioTracks: Int, width: Int = 640, height: Int = 360, fps: Int = 30,
+                          codec: VideoCodec = .h264) -> VideoWriterSettings {
+        VideoWriterSettings(size: CGSize(width: width, height: height), fps: fps, codec: codec,
                             bitrate: 1_000_000, audioTracks: audioTracks)
     }
 
     /// A finished recording of `seconds` with one audio track per entry of `audio`.
-    private func recordMov(in directory: URL, audio: [AudioTrackKind], seconds: Double) async throws -> URL {
+    private func recordMov(in directory: URL, audio: [AudioTrackKind], seconds: Double,
+                           codec: VideoCodec = .h264) async throws -> URL {
         let url = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 10.00.00.mov")
-        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: audio.count))
+        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: audio.count, codec: codec))
         await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 30, audio: audio,
                                     frame: SyntheticMedia.solidRecording(width: width, height: height))
         return try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
     }
 
-    private func expectPassthroughVideo(_ asset: AVURLAsset, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+    private func expectPassthroughVideo(_ asset: AVURLAsset, codec: CMVideoCodecType = kCMVideoCodecType_H264,
+                                        sourceLocation: SourceLocation = #_sourceLocation) async throws {
         let video = try await asset.loadTracks(withMediaType: .video)
         try #require(video.count == 1, sourceLocation: sourceLocation)
         let description = try #require(try await video[0].load(.formatDescriptions).first, sourceLocation: sourceLocation)
-        #expect(CMFormatDescriptionGetMediaSubType(description) == kCMVideoCodecType_H264, sourceLocation: sourceLocation)
+        #expect(CMFormatDescriptionGetMediaSubType(description) == codec, sourceLocation: sourceLocation)
         let primaries = CMFormatDescriptionGetExtension(
             description, extensionKey: kCMFormatDescriptionExtension_ColorPrimaries) as? String
         #expect(primaries == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String, sourceLocation: sourceLocation)
@@ -73,6 +76,20 @@ struct RecordingFinalizerTests {
         #expect(asbd.mChannelsPerFrame == 2)
         let audioDuration = try await audio[0].load(.timeRange).duration.seconds
         #expect(abs(audioDuration - 3) <= 0.1)
+    }
+
+    /// HEVC is the codec of the default "Meeting" profile.
+    @Test(.enabled(if: SyntheticMedia.canEncodeHEVC, "kein HEVC-Encoder verfügbar"))
+    func finalizeKeepsHEVC() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = try await recordMov(in: directory, audio: [.system], seconds: 2, codec: .hevc)
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+
+        let asset = AVURLAsset(url: mp4)
+        try await expectPassthroughVideo(asset, codec: kCMVideoCodecType_HEVC)
+        #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
     }
 
     @Test func finalizeVideoOnly() async throws {

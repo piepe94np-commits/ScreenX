@@ -170,12 +170,36 @@ public enum RecordingFinalizer {
 
         // Each track is pumped on its own queue so the writer can interleave them freely. If one append
         // fails, the others are stopped too: a failed writer may never ask them for more data.
-        let appendsSucceeded = await withTaskGroup(of: Bool.self) { group in
-            for pump in pumps { group.addTask { await pump.run() } }
+        // A writer that fails on its own (e.g. the disk is full) may stop asking for data without any
+        // append failing, so a watchdog checks its status and stops the pumps.
+        let watched = WriterStatusWatch(writer)
+        let appendsSucceeded = await withTaskGroup(of: PumpEvent.self) { group in
+            for pump in pumps { group.addTask { .pumpFinished(await pump.run()) } }
+            group.addTask {
+                while !Task.isCancelled {
+                    if watched.hasFailed { return .writerFailed }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                return .watchStopped
+            }
             var all = true
-            for await succeeded in group where !succeeded {
-                all = false
-                pumps.forEach { $0.abort() }
+            var finishedPumps = 0
+            for await event in group {
+                switch event {
+                case .pumpFinished(let succeeded):
+                    finishedPumps += 1
+                    if !succeeded {
+                        all = false
+                        pumps.forEach { $0.abort() }
+                    }
+                    // Pump tasks ignore cancellation; this only ends the watchdog.
+                    if finishedPumps == pumps.count { group.cancelAll() }
+                case .writerFailed:
+                    all = false
+                    pumps.forEach { $0.abort() }
+                case .watchStopped:
+                    break
+                }
             }
             return all
         }
@@ -199,6 +223,20 @@ public enum RecordingFinalizer {
     }
 
     private static var unknown: String { String(localized: "Unbekannter Fehler") }
+}
+
+private enum PumpEvent: Sendable {
+    case pumpFinished(Bool)
+    case writerFailed
+    case watchStopped
+}
+
+/// Lets the watchdog task read the writer's status. `@unchecked Sendable`: only `status` is read,
+/// which AVAssetWriter allows from any thread.
+private final class WriterStatusWatch: @unchecked Sendable {
+    private let writer: AVAssetWriter
+    init(_ writer: AVAssetWriter) { self.writer = writer }
+    var hasFailed: Bool { writer.status == .failed }
 }
 
 /// Copies the samples of one reader output into one writer input until the output is exhausted.
