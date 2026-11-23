@@ -17,13 +17,7 @@ struct WriterDiagnosticsTests {
     }
 
     @Test func diagnose() async throws {
-        let w = 640, h = 360
-        for b in [414_720, 40_000_000] {
-            try await run("block8-static", bitrate: b) { _ in SyntheticMedia.blockNoiseFrame(width: w, height: h, block: 8, offset: 0) }
-            try await run("block8-scroll4", bitrate: b) { i in SyntheticMedia.blockNoiseFrame(width: w, height: h, block: 8, offset: 4 * i) }
-            try await run("block4-scroll4", bitrate: b) { i in SyntheticMedia.blockNoiseFrame(width: w, height: h, block: 4, offset: 4 * i) }
-            try await run("block2-scroll2", bitrate: b) { i in SyntheticMedia.blockNoiseFrame(width: w, height: h, block: 2, offset: 2 * i) }
-            try await run("block1-scroll1", bitrate: b) { i in SyntheticMedia.blockNoiseFrame(width: w, height: h, block: 1, offset: i) }
-        }
+        try await run("block3-scroll3", bitrate: 414_720) { i in SyntheticMedia.blockNoiseFrame(width: 640, height: 360, block: 3, offset: 3 * i) }
+        try await run("block3-scroll3", bitrate: 40_000_000) { i in SyntheticMedia.blockNoiseFrame(width: 640, height: 360, block: 3, offset: 3 * i) }
     }
 }
