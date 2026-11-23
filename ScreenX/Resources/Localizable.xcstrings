@@ -276,7 +276,11 @@
     "Das Video konnte nicht geschrieben werden: %@" : {},
     "Es wurden keine Bilder aufgenommen." : {},
     "Unbekannter Fehler" : {},
-    "Die Aufnahme wurde bereits beendet." : {}
+    "Die Aufnahme wurde bereits beendet." : {},
+    "Die Aufnahme konnte nicht gelesen werden: %@" : {},
+    "Die Aufnahme enthält kein Video." : {},
+    "Es gibt bereits eine fertige Datei mit diesem Namen." : {},
+    "Die Aufnahme konnte nicht fertiggestellt werden: %@" : {}
   },
   "version" : "1.0"
 }

@@ -73,11 +73,14 @@ public struct VideoWriterSettings: Sendable, Equatable {
             channels: AVAudioChannelCount(audioChannels), interleaved: true)!
     }
 
-    var audioOutputSettings: [String: Any] {
+    var audioOutputSettings: [String: Any] { Self.aacOutputSettings }
+
+    /// AAC encoder settings shared by the recording and the finalized `.mp4`.
+    static var aacOutputSettings: [String: Any] {
         [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: Self.audioSampleRate,
-            AVNumberOfChannelsKey: Self.audioChannels,
+            AVSampleRateKey: audioSampleRate,
+            AVNumberOfChannelsKey: audioChannels,
             AVEncoderBitRateKey: RecordingEstimate.audioBitrate,
         ]
     }
