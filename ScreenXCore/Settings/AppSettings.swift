@@ -15,6 +15,13 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var windowShadow: Bool
     public var exportScale: ExportScale
     public var applyLastStyle: Bool
+    public var videoHotkey: KeyCombo?
+    public var recordingProfiles: [RecordingProfile]
+    public var defaultProfileID: String
+    public var countdown: CountdownSetting
+    public var hideNotifications: Bool
+    public var microphoneDeviceID: String?
+    public var lastRecordingSetup: RecordingSetup?
 
     public init(
         hotkeys: [CaptureMode: KeyCombo],
@@ -25,7 +32,14 @@ public struct AppSettings: Codable, Sendable, Equatable {
         jpegQuality: Double,
         windowShadow: Bool,
         exportScale: ExportScale = .original,
-        applyLastStyle: Bool = true
+        applyLastStyle: Bool = true,
+        videoHotkey: KeyCombo? = AppSettings.defaultVideoHotkey,
+        recordingProfiles: [RecordingProfile] = RecordingProfile.builtins,
+        defaultProfileID: String = RecordingProfile.defaultID,
+        countdown: CountdownSetting = .three,
+        hideNotifications: Bool = true,
+        microphoneDeviceID: String? = nil,
+        lastRecordingSetup: RecordingSetup? = nil
     ) {
         self.hotkeys = hotkeys
         self.afterCapture = afterCapture
@@ -36,7 +50,17 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.windowShadow = windowShadow
         self.exportScale = exportScale
         self.applyLastStyle = applyLastStyle
+        self.videoHotkey = videoHotkey
+        self.recordingProfiles = recordingProfiles
+        self.defaultProfileID = defaultProfileID
+        self.countdown = countdown
+        self.hideNotifications = hideNotifications
+        self.microphoneDeviceID = microphoneDeviceID
+        self.lastRecordingSetup = lastRecordingSetup
     }
+
+    /// ⌥⇧6 (key code 22).
+    public static let defaultVideoHotkey = KeyCombo(keyCode: 22, modifiers: [.option, .shift])
 
     /// `userInfo` key carrying the home directory (`URL`) used for default values while decoding.
     public static let homeUserInfoKey = CodingUserInfoKey(rawValue: "com.screenx.settings.home")!
@@ -44,6 +68,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case hotkeys, afterCapture, quickAccessDuration, saveDirectory, exportFormat
         case jpegQuality, windowShadow, exportScale, applyLastStyle
+        case videoHotkey, recordingProfiles, defaultProfileID, countdown, hideNotifications
+        case microphoneDeviceID, lastRecordingSetup
     }
 
     /// Tolerant decoding: every field falls back to its default when missing or unreadable.
@@ -70,6 +96,43 @@ public struct AppSettings: Codable, Sendable, Equatable {
         windowShadow = (try? c.decodeIfPresent(Bool.self, forKey: .windowShadow)) ?? d.windowShadow
         exportScale = (try? c.decodeIfPresent(ExportScale.self, forKey: .exportScale)) ?? d.exportScale
         applyLastStyle = (try? c.decodeIfPresent(Bool.self, forKey: .applyLastStyle)) ?? d.applyLastStyle
+        // A stored-but-null videoHotkey means the user cleared it; only a missing key yields the default.
+        if c.contains(.videoHotkey) {
+            videoHotkey = (try? c.decodeIfPresent(KeyCombo.self, forKey: .videoHotkey)) ?? nil
+        } else {
+            videoHotkey = d.videoHotkey
+        }
+        if let lossy = try? c.decodeIfPresent([LossyProfile].self, forKey: .recordingProfiles) {
+            recordingProfiles = lossy.compactMap(\.value)
+        } else {
+            recordingProfiles = d.recordingProfiles
+        }
+        defaultProfileID = (try? c.decodeIfPresent(String.self, forKey: .defaultProfileID)) ?? d.defaultProfileID
+        countdown = (try? c.decodeIfPresent(CountdownSetting.self, forKey: .countdown)) ?? d.countdown
+        hideNotifications = (try? c.decodeIfPresent(Bool.self, forKey: .hideNotifications)) ?? d.hideNotifications
+        microphoneDeviceID = (try? c.decodeIfPresent(String.self, forKey: .microphoneDeviceID)) ?? nil
+        lastRecordingSetup = (try? c.decodeIfPresent(RecordingSetup.self, forKey: .lastRecordingSetup)) ?? nil
+    }
+
+    /// Decodes one profile, turning an unreadable element into `nil` instead of failing the list.
+    private struct LossyProfile: Decodable {
+        let value: RecordingProfile?
+        init(from decoder: Decoder) throws {
+            value = try? RecordingProfile(from: decoder)
+        }
+    }
+
+    /// The profile with `id`, else the default profile, else the first built-in.
+    public func profile(id: String) -> RecordingProfile {
+        recordingProfiles.first { $0.id == id }
+            ?? recordingProfiles.first { $0.id == defaultProfileID }
+            ?? RecordingProfile.builtins[0]
+    }
+
+    /// Switching profile: the audio toggles follow the profile.
+    public func setup(applying profile: RecordingProfile, mode: CaptureMode) -> RecordingSetup {
+        RecordingSetup(mode: mode, profileID: profile.id,
+                       systemAudio: profile.systemAudio, microphone: profile.microphone)
     }
 
     public static func defaults(home: URL) -> AppSettings {
@@ -87,7 +150,14 @@ public struct AppSettings: Codable, Sendable, Equatable {
             jpegQuality: 0.9,
             windowShadow: false,
             exportScale: .original,
-            applyLastStyle: true
+            applyLastStyle: true,
+            videoHotkey: defaultVideoHotkey,
+            recordingProfiles: RecordingProfile.builtins,
+            defaultProfileID: RecordingProfile.defaultID,
+            countdown: .three,
+            hideNotifications: true,
+            microphoneDeviceID: nil,
+            lastRecordingSetup: nil
         )
     }
 }
