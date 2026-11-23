@@ -280,7 +280,14 @@
     "Die Aufnahme konnte nicht gelesen werden: %@" : {},
     "Die Aufnahme enthält kein Video." : {},
     "Es gibt bereits eine fertige Datei mit diesem Namen." : {},
-    "Die Aufnahme konnte nicht fertiggestellt werden: %@" : {}
+    "Die Aufnahme konnte nicht fertiggestellt werden: %@" : {},
+    "Es gibt bereits eine Datei mit diesem Namen." : {},
+    "Dieses Dateiformat wird beim Kürzen nicht unterstützt." : {},
+    "Das Video konnte nicht gelesen werden: %@" : {},
+    "Das gekürzte Video konnte nicht gespeichert werden: %@" : {},
+    "Die Datei enthält kein Video." : {},
+    "Ein Bild des Videos konnte nicht gelesen werden: %@" : {},
+    "Das GIF konnte nicht gespeichert werden: %@" : {}
   },
   "version" : "1.0"
 }
