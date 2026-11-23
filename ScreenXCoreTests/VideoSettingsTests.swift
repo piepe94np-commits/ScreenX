@@ -58,6 +58,21 @@ struct VideoSettingsTests {
         #expect(s.recordingProfiles[1].fps == 10)
     }
 
+    @Test func malformedVideoHotkeyFallsBackToDefaultButNullClears() throws {
+        let def = KeyCombo(keyCode: 22, modifiers: [.option, .shift])
+        #expect(try decode(#"{"videoHotkey":"kaputt"}"#).videoHotkey == def)
+        #expect(try decode(#"{"videoHotkey":{"keyCode":"x"}}"#).videoHotkey == def)
+        #expect(try decode(#"{"videoHotkey":null}"#).videoHotkey == nil)
+    }
+
+    @Test func profileListEmptyFallsBackAndDuplicatesDropped() throws {
+        #expect(try decode(#"{"recordingProfiles":[]}"#).recordingProfiles == RecordingProfile.builtins)
+        #expect(try decode(#"{"recordingProfiles":["kaputt"]}"#).recordingProfiles == RecordingProfile.builtins)
+        let s = try decode(#"{"recordingProfiles":[{"id":"a","name":"Erst"},{"id":"a","name":"Zweit"},{"id":"b","name":"B"}]}"#)
+        #expect(s.recordingProfiles.map(\.id) == ["a", "b"])
+        #expect(s.recordingProfiles[0].name == "Erst")
+    }
+
     @Test func profileSwitchResetsAudioToggles() {
         let s = AppSettings.defaults(home: home)
         let demo = s.profile(id: "demo")

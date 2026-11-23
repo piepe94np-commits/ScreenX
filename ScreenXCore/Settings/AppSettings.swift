@@ -96,14 +96,18 @@ public struct AppSettings: Codable, Sendable, Equatable {
         windowShadow = (try? c.decodeIfPresent(Bool.self, forKey: .windowShadow)) ?? d.windowShadow
         exportScale = (try? c.decodeIfPresent(ExportScale.self, forKey: .exportScale)) ?? d.exportScale
         applyLastStyle = (try? c.decodeIfPresent(Bool.self, forKey: .applyLastStyle)) ?? d.applyLastStyle
-        // A stored-but-null videoHotkey means the user cleared it; only a missing key yields the default.
-        if c.contains(.videoHotkey) {
-            videoHotkey = (try? c.decodeIfPresent(KeyCombo.self, forKey: .videoHotkey)) ?? nil
+        // An explicit null videoHotkey means the user cleared it; a missing or malformed value yields the default.
+        if c.contains(.videoHotkey), (try? c.decodeNil(forKey: .videoHotkey)) == true {
+            videoHotkey = nil
+        } else if let combo = try? c.decode(KeyCombo.self, forKey: .videoHotkey) {
+            videoHotkey = combo
         } else {
             videoHotkey = d.videoHotkey
         }
         if let lossy = try? c.decodeIfPresent([LossyProfile].self, forKey: .recordingProfiles) {
-            recordingProfiles = lossy.compactMap(\.value)
+            var seen = Set<String>()
+            let unique = lossy.compactMap(\.value).filter { seen.insert($0.id).inserted }
+            recordingProfiles = unique.isEmpty ? d.recordingProfiles : unique
         } else {
             recordingProfiles = d.recordingProfiles
         }
