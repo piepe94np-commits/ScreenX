@@ -259,7 +259,9 @@ public final class VideoFileWriter: @unchecked Sendable {
         }
         switch normalizers[index].convert(sampleBuffer, at: time) {
         case .output(let silence, let converted, let start):
-            // Silence before the data, in chunks of at most 1 s so memory stays bounded.
+            // Silence before the data, in chunks of at most 1 s so memory stays bounded. After a very long
+            // stall the input may become not-ready while the fill catches up; then real audio is dropped
+            // (counted) and the fill resumes from what was written, so timing stays correct.
             var written = silence?.start ?? start
             for chunk in silence?.chunks() ?? [] {
                 guard input.isReadyForMoreMediaData else {

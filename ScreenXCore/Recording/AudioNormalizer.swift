@@ -48,7 +48,8 @@ final class AudioNormalizer {
     /// Output time at which the next converted frames continue.
     private var nextTime: CMTime?
     /// End of the last emitted output; nothing may start before it.
-    private var outputEnd: CMTime?
+    /// Starts at zero (the first video frame), so a source that starts late is filled with leading silence.
+    private var outputEnd: CMTime = .zero
     private var needsResync = false
     private static let resyncThreshold = CMTime(value: 20, timescale: 1000)
     /// Timing corrections so far (for tests and diagnostics).
@@ -119,7 +120,7 @@ final class AudioNormalizer {
         let produced = CMTime(value: CMTimeValue(output.frameLength), timescale: rate)
         var skip: AVAudioFrameCount = 0
         var silence: Silence?
-        if let outputEnd, CMTimeCompare(start, outputEnd) > 0 {
+        if CMTimeCompare(start, outputEnd) > 0 {
             // Fill a forward jump of any length with silence so the encoder sees contiguous audio;
             // AVAssetWriter would otherwise close the timestamp gap and shift everything after it earlier.
             let frames = Int((CMTimeSubtract(start, outputEnd).seconds * outputFormat.sampleRate).rounded())
@@ -128,9 +129,9 @@ final class AudioNormalizer {
                 start = CMTimeAdd(outputEnd, CMTime(value: CMTimeValue(frames), timescale: rate))
                 silenceFrames += frames
             }
-        } else if let outputEnd, CMTimeCompare(start, outputEnd) < 0 {
+        } else if CMTimeCompare(start, outputEnd) < 0 {
             let overlap = CMTimeSubtract(outputEnd, start).seconds * outputFormat.sampleRate
-            guard overlap < Double(output.frameLength) else {
+            guard overlap.rounded(.up) < Double(output.frameLength) else {
                 nextTime = CMTimeAdd(start, produced)
                 return .covered
             }

@@ -126,6 +126,28 @@ struct VideoFileWriterTests {
         #expect(before == SyntheticMedia.colorIndex(at: 1.5))
         let after = try await paletteIndex(of: asset, at: 2.5)
         #expect(after == SyntheticMedia.colorIndex(at: 7.5))
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        try #require(audio.count == 1)
+        try await expectNormalizedAAC(audio[0], duration: 4)
+        #expect(writer.audioTimingCorrections.silenceFrames < 1024)
+        expectNoDrops(writer)
+    }
+
+    @Test func lateMicrophoneIsFilledFromZero() async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: 1))
+        await SyntheticMedia.record(writer, from: 0, to: 3, fps: 30, audio: [.microphone], audioStall: 0..<0.5,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        let out = try await writer.finish(stopAt: SyntheticMedia.hostTime(3))
+
+        let silence = writer.audioTimingCorrections.silenceFrames
+        #expect(abs(silence - 24_000) <= 1024, "silence frames \(silence)")
+        let audio = try await AVURLAsset(url: out).loadTracks(withMediaType: .audio)
+        try #require(audio.count == 1)
+        let range = try await audio[0].load(.timeRange)
+        #expect(abs(range.start.seconds) <= 0.01)
+        try await expectNormalizedAAC(audio[0], duration: 3)
         expectNoDrops(writer)
     }
 
@@ -145,6 +167,7 @@ struct VideoFileWriterTests {
         let audio = try await AVURLAsset(url: out).loadTracks(withMediaType: .audio)
         try #require(audio.count == 1)
         try await expectNormalizedAAC(audio[0], duration: 4)
+        #expect(writer.audioTimingCorrections.silenceFrames < 1024)
         expectNoDrops(writer)
         #expect(writer.failure == nil)
     }
