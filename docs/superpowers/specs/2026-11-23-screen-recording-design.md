@@ -102,7 +102,7 @@ Die Aufnahme-Leiste merkt sich Modus, Profil und Ton-Schalter der letzten Aufnah
 | Codec | HEVC (kleiner), H.264 (läuft überall) |
 | Mauszeiger | an / aus |
 | Klicks hervorheben | an / aus |
-| Ton | Systemton an/aus, Mikrofon an/aus (Gerät wählbar) |
+| Ton | Systemton an/aus, Mikrofon an/aus (das Mikrofon-**Gerät** ist global, siehe §10) |
 | Ausgabe | Video (MP4) oder GIF |
 
 **Mitgelieferte Profile** (änderbar; Standard: „Meeting“)
@@ -134,6 +134,14 @@ Für GIF zeigt die Schätzung „≈ x MB pro 10 s“ und beruht auf einem Erfah
 
 Während der Aufnahme zeigt das Menü die aktuelle Dateigröße.
 
+**Was gilt wann** *(Entwickler-Entscheidung)*
+- Das gewählte Profil liefert alle Werte.
+- Ton-Schalter und Schnelländerungen in der Leiste gelten nur für die nächste Aufnahme.
+- `lastRecordingSetup` merkt sich Modus, Profil-ID und die beiden Ton-Schalter. Beim nächsten Öffnen der Leiste sind sie wieder so gesetzt.
+- Wechselt man das Profil, übernehmen die Schalter die Werte des neuen Profils.
+- Schnelländerungen an Auflösung, fps, Qualität und Codec werden nicht gemerkt, außer mit „Als Profil sichern“.
+- Das Mikrofon-Gerät ist eine einzige globale Einstellung (`microphoneDeviceID`), nicht pro Profil.
+
 ## 7. Aufnahme-Pipeline (Core-Teil testbar)
 
 ```
@@ -144,14 +152,15 @@ SCStream ─┬─ .screen      CMSampleBuffer (BGRA, bereits auf Zielauflösung
         RecordingSession (App)  ── Pause/Fortsetzen, Status, Fehler
                 │
         VideoFileWriter (ScreenXCore)
-          · AVAssetWriter, MP4, movieFragmentInterval = 10 s (absturzsicher)
+          · AVAssetWriter, QuickTime-Container (.mov) mit movieFragmentInterval = 10 s (absturzsicher)
           · 1 Videospur + bis zu 2 Tonspuren (System, Mikro)
           · Zeitstempel: erster Video-Frame = 0; Pausen werden herausgerechnet (Offset-Summe)
           · verwirft Audio vor dem ersten Video-Frame
                 │
         Fertigstellen (ScreenXCore)
-          · bei 2 Tonspuren: Mischen zu 1 Spur (AVAssetReader + AVAssetReaderAudioMixOutput → AAC),
-            Video Passthrough. Schlägt das fehl, bleibt die Datei mit 2 Spuren erhalten.
+          · Umschreiben in die endgültige .mp4 (Video Passthrough); dabei bei 2 Tonspuren Mischen zu 1 Spur
+            (AVAssetReader + AVAssetReaderAudioMixOutput → AAC). Erst danach wird die .mov gelöscht.
+            Schlägt das fehl, bleibt die .mov (abspielbar, ggf. 2 Tonspuren) mit Hinweis erhalten.
           · GIF-Profil: Umwandlung (§9), Zwischen-Video danach gelöscht
 ```
 
@@ -159,13 +168,17 @@ SCStream ─┬─ .screen      CMSampleBuffer (BGRA, bereits auf Zielauflösung
 - **Statische Bildschirme:** SCStream liefert bei unverändertem Inhalt keine neuen Frames. Der Writer schreibt nur, was kommt; Player halten das letzte Bild. Am Ende wird der letzte Frame bis zum Stoppzeitpunkt verlängert (Session-Ende = Stoppzeit), damit die Dauer stimmt.
 - **Mauszeiger:** `showsCursor`.
 - **Ausschluss:** Alle ScreenX-Fenster (Leiste, Rahmen, Countdown, Vorschaukarten, Klick-Kreise siehe unten) werden über `SCContentFilter` ausgeschlossen. Ausnahme: Klick-Kreise **sollen** ins Video und werden deshalb nicht ausgeschlossen.
-- **Klicks hervorheben:** globaler Maus-Monitor (`NSEvent.addGlobalMonitorForEvents`, Linksklick). Ein transparentes, klickdurchlässiges Fenster zeigt an der Klickstelle einen kurzen Kreis (≈ 0,4 s, halbtransparent). Er ist auch auf dem Bildschirm sichtbar und erscheint so im Video. Es wird kein Frame nachbearbeitet.
-- **Mitteilungen ausblenden** (Option, Standard an für Bildschirm-Modus): `com.apple.notificationcenterui` wird ausgeschlossen.
+- **Klicks hervorheben** (nur Bereich- und Bildschirm-Modus; im Fenster-Modus ist die Option ausgegraut mit Hinweis, weil die Fensteraufnahme nur das Fenster selbst enthält): globaler Maus-Monitor (`NSEvent.addGlobalMonitorForEvents`, Linksklick). Ein transparentes, klickdurchlässiges Fenster zeigt an der Klickstelle einen kurzen Kreis (≈ 0,4 s, halbtransparent). Er ist auch auf dem Bildschirm sichtbar und erscheint so im Video. Es wird kein Frame nachbearbeitet. Technisch: ein dauerhaft geöffnetes Overlay-Fenster pro Bildschirm, das im Filter über `exceptingWindows` ausdrücklich eingeschlossen wird.
+- **Mitteilungen ausblenden** (Option, Standard an für Bildschirm-Modus): `com.apple.notificationcenterui` wird ausgeschlossen. Taucht die App erst später in `SCShareableContent` auf (kein Banner beim Start), wird der Filter während der Aufnahme per `updateContentFilter` nachgezogen. Das ist auf macOS 26 zu prüfen und nicht garantiert; im Zweifel steht es so in der Checkliste.
 - **Fenster-Modus:** `SCContentFilter(desktopIndependentWindow:)`. Das Fenster wird auch verdeckt oder verschoben aufgenommen. Ändert es die Größe, wird der Inhalt in die festen Zielmaße eingepasst (Letterbox). Minimiert friert das Bild ein, der Ton läuft weiter. Wird das Fenster geschlossen, endet die Aufnahme regulär mit Hinweis.
 - **Speicherplatz:** Vor dem Start mindestens 1 GB frei, sonst Warnung mit „Trotzdem starten“. Während der Aufnahme alle 10 s prüfen. Unter 300 MB: Aufnahme sauber beenden und Mitteilung zeigen.
 - **Fehler:** Stream- oder Writer-Fehler beenden die Aufnahme, das bis dahin Geschriebene wird fertiggestellt und als Karte gezeigt, dazu eine Fehlermeldung.
 
-**Dateiname:** `ScreenX Aufnahme JJJJ-MM-TT um HH.MM.SS.mp4` bzw. `.gif` im bestehenden Speicherort.
+**Dateiname:** `ScreenX Aufnahme JJJJ-MM-TT um HH.MM.SS.mp4` bzw. `.gif` im bestehenden Speicherort. Während der Aufnahme heißt die Datei gleich, aber mit `.mov`.
+
+**Wiederherstellen nach Absturz** *(Entwickler-Entscheidung)*: Beim Start sucht ScreenX im Speicherort nach übrig gebliebenen `ScreenX Aufnahme … .mov` ohne zugehörige `.mp4`. Gefundene Dateien bietet es per Mitteilung an: „Unvollständige Aufnahme gefunden – fertigstellen?“. Fertigstellen läuft wie oben.
+
+**Mikrofon-Berechtigung:** Zusätzlich zu `NSMicrophoneUsageDescription` braucht die App das Hardened-Runtime-Entitlement `com.apple.security.device.audio-input`. Die App bekommt dafür eine `.entitlements`-Datei.
 
 ## 8. Oberflächen
 
@@ -182,7 +195,7 @@ Alle neuen Oberflächen werden vorab in Figma gestaltet (Seite „M5 Video“) u
 3. **Aufnahmerahmen** (Bereichsmodus) – gestrichelte Linie außen um den Bereich.
 4. **Menüleiste während der Aufnahme** – das Symbol wird zu rotem Punkt + Laufzeit. Das Menü enthält Stopp (⌥⇧6), Pause/Fortsetzen, Verwerfen (mit Rückfrage) und eine Infozeile „1080p · 24 fps · 312 MB“. In der Pause blinkt die Laufzeit.
 5. **Vorschaukarte Video** – Vorschaubild, Dauer-Badge, Größe. Beim Überfahren erscheinen Öffnen, Kürzen, Im Finder, Löschen. Herausziehen ergibt die Datei. Gleiche Stapel- und Ausblendlogik wie Screenshots.
-6. **Kürzen-Fenster** – `AVPlayerView` mit Trim-Leiste, dazu „Sichern“ (neue Datei „… gekürzt.mp4“, Option „Original ersetzen“) und „Als GIF …“. Letzteres öffnet ein Blatt mit Breite, fps und Größenschätzung.
+6. **Kürzen-Fenster** – `AVPlayerView` im Trim-Modus. Die Trim-Leiste bringt eigene Knöpfe „Kürzen/Abbrechen“ mit; erst nach Bestätigen steht der Bereich fest. Danach zeigt das Fenster die Leiste aus dem Figma-Entwurf mit Bereich, Größe, dazu „Sichern“ (neue Datei „… gekürzt.mp4“, Option „Original ersetzen“) und „Als GIF …“. Letzteres öffnet ein Blatt mit Breite, fps und Größenschätzung.
 7. **Einstellungen → neuer Reiter „Video“**
    - Standardprofil, Profilliste (anlegen, bearbeiten, duplizieren, löschen, mitgelieferte zurücksetzen)
    - Countdown, Mitteilungen ausblenden, Mikrofon-Standardgerät
@@ -192,9 +205,10 @@ Alle neuen Oberflächen werden vorab in Figma gestaltet (Seite „M5 Video“) u
 
 - **Quelle:** gesamtes Video oder gekürzter Ausschnitt.
 - **Optionen:** Breite (Original / 800 / 640 / 480 / 320), fps (15 / 10 / 8), Endlosschleife an.
+- **Kürzen-Genauigkeit:** Passthrough schneidet an Keyframes. Der Writer setzt deshalb ein maximales Keyframe-Intervall von 2 s (`AVVideoMaxKeyFrameIntervalDurationKey`), damit Schnitte nah an der gewählten Stelle liegen.
 - **Umwandlung:**
   - Bilder per `AVAssetImageGenerator` in festen Abständen (Toleranz 0)
-  - `CGImageDestination` (`kUTTypeGIF`) mit `kCGImagePropertyGIFDelayTime`
+  - `CGImageDestination` (`UTType.gif`) mit `kCGImagePropertyGIFUnclampedDelayTime`; Rundung auf 1/100 s wird über den Clip ausgeglichen, damit die Gesamtdauer stimmt
   - im Hintergrund, mit Fortschritt und abbrechbar
 - **Warnung**, wenn die Schätzung über 25 MB liegt („GIF wird groß – kürzer, kleiner oder als Video teilen?“).
 
@@ -233,7 +247,8 @@ Alle neuen Oberflächen werden vorab in Figma gestaltet (Seite „M5 Video“) u
   - Profile- und Settings-Kodierung, tolerantes Laden
   - Zeitstempel- und Pause-Logik als reine Funktion
   - `VideoFileWriter` mit synthetischen Bildern und synthetischem Ton: Datei abspielbar, Dauer, Maße, Codec, Bitrate ungefähr, Pause ohne Lücke, letzter Frame verlängert
-  - Ton-Mischen
+  - Ton-Mischen und Umschreiben .mov → .mp4
+  - HEVC-Tests dürfen auf CI übersprungen werden, wenn kein Hardware-Encoder da ist (CI-Runner sind VMs); H.264-Pfad wird immer getestet
   - Kürzen (Passthrough-Bereich)
   - GIF-Umwandlung: Bildzahl, Verzögerung, Maße
 - **Manuell (Mac):** Checkliste `docs/checklists/M5.md`
