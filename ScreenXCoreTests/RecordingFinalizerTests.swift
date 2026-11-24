@@ -1,0 +1,248 @@
+import AVFoundation
+import CoreMedia
+import Testing
+@testable import ScreenXCore
+
+@Suite(.serialized)
+struct RecordingFinalizerTests {
+    private let width = 640
+    private let height = 360
+
+    private func makeDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ScreenXFinalizer-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// All file names in `directory`, hidden ones included (to catch left-over temporary files).
+    private func fileNames(in directory: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+    }
+
+    private func settings(audioTracks: Int, width: Int = 640, height: Int = 360, fps: Int = 30,
+                          codec: VideoCodec = .h264) -> VideoWriterSettings {
+        VideoWriterSettings(size: CGSize(width: width, height: height), fps: fps, codec: codec,
+                            bitrate: 1_000_000, audioTracks: audioTracks)
+    }
+
+    /// A finished recording of `seconds` with one audio track per entry of `audio`.
+    private func recordMov(in directory: URL, audio: [AudioTrackKind], seconds: Double,
+                           codec: VideoCodec = .h264) async throws -> URL {
+        let url = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 10.00.00.mov")
+        let writer = try VideoFileWriter(url: url, settings: settings(audioTracks: audio.count, codec: codec))
+        await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 30, audio: audio,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        return try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
+    }
+
+    private func expectPassthroughVideo(_ asset: AVURLAsset, codec: CMVideoCodecType = kCMVideoCodecType_H264,
+                                        sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        let video = try await asset.loadTracks(withMediaType: .video)
+        try #require(video.count == 1, sourceLocation: sourceLocation)
+        let description = try #require(try await video[0].load(.formatDescriptions).first, sourceLocation: sourceLocation)
+        #expect(CMFormatDescriptionGetMediaSubType(description) == codec, sourceLocation: sourceLocation)
+        let primaries = CMFormatDescriptionGetExtension(
+            description, extensionKey: kCMFormatDescriptionExtension_ColorPrimaries) as? String
+        #expect(primaries == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String, sourceLocation: sourceLocation)
+        let size = try await video[0].load(.naturalSize)
+        #expect(size == CGSize(width: width, height: height), sourceLocation: sourceLocation)
+    }
+
+    @Test func finalizeMixesTwoTracks() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = try await recordMov(in: directory, audio: [.system, .microphone], seconds: 3)
+        let movAsset = AVURLAsset(url: mov)
+        #expect(try await movAsset.loadTracks(withMediaType: .audio).count == 2)
+        let movDuration = try await movAsset.load(.duration).seconds
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+
+        #expect(mp4 == RecordingFinalizer.finalURL(for: mov))
+        #expect(!FileManager.default.fileExists(atPath: mov.path))
+        let remaining = try fileNames(in: directory)
+        #expect(remaining == [mp4.lastPathComponent])
+        let asset = AVURLAsset(url: mp4)
+        let duration = try await asset.load(.duration).seconds
+        #expect(abs(duration - movDuration) <= 0.1)
+        #expect(abs(duration - 3) <= 0.1)
+        try await expectPassthroughVideo(asset)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        try #require(audio.count == 1)
+        let description = try #require(try await audio[0].load(.formatDescriptions).first)
+        #expect(CMFormatDescriptionGetMediaSubType(description) == kAudioFormatMPEG4AAC)
+        let asbd = try #require(CMAudioFormatDescriptionGetStreamBasicDescription(description)).pointee
+        #expect(asbd.mSampleRate == 48_000)
+        #expect(asbd.mChannelsPerFrame == 2)
+        let audioDuration = try await audio[0].load(.timeRange).duration.seconds
+        #expect(abs(audioDuration - 3) <= 0.1)
+    }
+
+    /// HEVC is the codec of the default "Meeting" profile.
+    @Test(.enabled(if: SyntheticMedia.canEncodeHEVC, "kein HEVC-Encoder verfügbar"))
+    func finalizeKeepsHEVC() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = try await recordMov(in: directory, audio: [.system], seconds: 2, codec: .hevc)
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+
+        let asset = AVURLAsset(url: mp4)
+        try await expectPassthroughVideo(asset, codec: kCMVideoCodecType_HEVC)
+        #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
+    }
+
+    /// A source that never delivered leaves an empty audio track (window mode with a failed system-audio
+    /// stream, or a silent microphone); the recording must still become an .mp4.
+    @Test(arguments: [(tracks: 2, fed: [AudioTrackKind.microphone], expected: 1), (tracks: 1, fed: [], expected: 0)])
+    func emptyAudioTrackIsSkipped(_ setup: (tracks: Int, fed: [AudioTrackKind], expected: Int)) async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 10.00.00.mov")
+        let writer = try VideoFileWriter(url: mov, settings: settings(audioTracks: setup.tracks))
+        await SyntheticMedia.record(writer, from: 0, to: 2, fps: 30, audio: setup.fed,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(2))
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+
+        let asset = AVURLAsset(url: mp4)
+        try await expectPassthroughVideo(asset)
+        #expect(try await asset.loadTracks(withMediaType: .audio).count == setup.expected)
+        #expect(abs(try await asset.load(.duration).seconds - 2) <= 0.1)
+    }
+
+    /// Peak level of a decoded audio track (0…1).
+    private func peak(of track: AVAssetTrack, in asset: AVAsset) throws -> Float {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsBigEndianKey: false,
+        ])
+        reader.add(output)
+        #expect(reader.startReading())
+        var peak: Float = 0
+        while let buffer = output.copyNextSampleBuffer() {
+            guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            let length = CMBlockBufferGetDataLength(block)
+            var data = [Float](repeating: 0, count: length / 4)
+            _ = data.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!) }
+            peak = max(peak, data.map(abs).max() ?? 0)
+        }
+        return peak
+    }
+
+    /// Both sources must be audible in the .mov and in the mixed .mp4 (interleaved and planar input,
+    /// the latter is what ScreenCaptureKit delivers).
+    @Test(arguments: [false, true])
+    func mixedAudioIsAudible(planar: Bool) async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 10.00.00.mov")
+        let writer = try VideoFileWriter(url: mov, settings: settings(audioTracks: 2))
+        await SyntheticMedia.record(writer, from: 0, to: 2, fps: 30, audio: [.system, .microphone],
+                                    audioFormat: planar ? .planarStereo48k : .stereo48k,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(2))
+
+        let movAsset = AVURLAsset(url: mov)
+        let movTracks = try await movAsset.loadTracks(withMediaType: .audio)
+        try #require(movTracks.count == 2)
+        for track in movTracks { #expect(try peak(of: track, in: movAsset) > 0.05, "mov track silent") }
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+        let asset = AVURLAsset(url: mp4)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        try #require(tracks.count == 1)
+        #expect(try peak(of: tracks[0], in: asset) > 0.05, "mixed mp4 track silent")
+    }
+
+    @Test func finalizeVideoOnly() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = try await recordMov(in: directory, audio: [], seconds: 2)
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+
+        #expect(!FileManager.default.fileExists(atPath: mov.path))
+        let asset = AVURLAsset(url: mp4)
+        #expect(try await asset.loadTracks(withMediaType: .audio).isEmpty)
+        try await expectPassthroughVideo(asset)
+        let duration = try await asset.load(.duration).seconds
+        #expect(abs(duration - 2) <= 0.1)
+    }
+
+    /// A crash: the writer writes 25 s of recording and never finishes. The file a crash leaves behind
+    /// is the `.mov` exactly as it is on disk at that moment, so the test takes a copy of it while the
+    /// writer is still running, then lets the writer finish its own live file only to release the encoder.
+    /// (A writer dropped without `finish` while recording in real time was followed by encoder frame drops
+    /// in later writer tests on CI; see the task report.)
+    @Test func unfinishedMovIsReadableAndFinalizes() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 11.00.00.mov")
+        try await recordCrashedFile(to: mov, seconds: 25)
+        let size = (try? FileManager.default.attributesOfItem(atPath: mov.path)[.size] as? NSNumber)?.int64Value
+        print("unfinished mov: \(size ?? -1) bytes")
+
+        let movDuration = try await AVURLAsset(url: mov).load(.duration).seconds
+        print("unfinished mov duration: \(movDuration) s")
+        #expect(movDuration >= 20)
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+
+        #expect(!FileManager.default.fileExists(atPath: mov.path))
+        let asset = AVURLAsset(url: mp4)
+        let duration = try await asset.load(.duration).seconds
+        print("finalized mp4 duration: \(duration) s")
+        #expect(abs(duration - movDuration) <= 0.1)
+        #expect(try await asset.loadTracks(withMediaType: .video).count == 1)
+        #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
+    }
+
+    /// Writes `seconds` of recording (faster than real time: the fragment interval counts recording time),
+    /// copies the unfinished file to `crashed`, then finishes the live file; the copy is never touched again.
+    private func recordCrashedFile(to crashed: URL, seconds: Double) async throws {
+        let live = FileManager.default.temporaryDirectory.appendingPathComponent("ScreenXLive-\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: live) }
+        let writer = try VideoFileWriter(url: live, settings: settings(audioTracks: 1, width: 320, height: 180, fps: 10))
+        await SyntheticMedia.record(writer, from: 0, to: seconds, fps: 10, audio: [.system],
+                                    frameDelay: .milliseconds(10),
+                                    frame: SyntheticMedia.solidRecording(width: 320, height: 180))
+        try FileManager.default.copyItem(at: live, to: crashed)
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(seconds))
+    }
+
+    @Test func leftoversFound() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let names = [
+            "ScreenX Aufnahme 2026-11-23 um 09.00.00.mov", "ScreenX Aufnahme 2026-11-23 um 09.00.00.mp4",
+            "ScreenX Aufnahme 2026-11-23 um 10.00.00.mov", "Urlaub.mov",
+            "ScreenX 2026-11-23 um 10.00.00.png",
+        ]
+        for name in names {
+            try Data().write(to: directory.appendingPathComponent(name))
+        }
+        let single = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 10.00.00.mov")
+
+        #expect(RecordingFinalizer.leftovers(in: directory).map(\.lastPathComponent) == [single.lastPathComponent])
+        #expect(RecordingFinalizer.leftovers(in: directory, excluding: [single]).isEmpty)
+        #expect(RecordingFinalizer.finalURL(for: single).lastPathComponent == "ScreenX Aufnahme 2026-11-23 um 10.00.00.mp4")
+    }
+
+    @Test func failedFinalizeKeepsMov() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 12.00.00.mov")
+        try Data("kein Video".utf8).write(to: mov)
+
+        await #expect(throws: RecordingFinalizerError.self) {
+            _ = try await RecordingFinalizer.finalize(mov: mov)
+        }
+
+        #expect(FileManager.default.fileExists(atPath: mov.path))
+        let remaining = try fileNames(in: directory)
+        #expect(remaining == [mov.lastPathComponent])
+    }
+}
