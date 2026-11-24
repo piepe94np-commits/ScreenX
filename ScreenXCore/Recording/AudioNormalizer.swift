@@ -93,8 +93,10 @@ final class AudioNormalizer {
         guard frames > 0, let input = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: frames) else {
             return .failed
         }
-        guard Self.copyPCM(from: sampleBuffer, into: input) else { return .failed }
+        // The length must be set first: it sizes the buffer list (mDataByteSize) that copyPCM fills.
+        // With length 0 nothing was copied and every recording's audio was silent.
         input.frameLength = frames
+        guard Self.copyPCM(from: sampleBuffer, into: input) else { return .failed }
 
         let capacity = AVAudioFrameCount(
             (Double(frames) * outputFormat.sampleRate / inputFormat.sampleRate).rounded(.up)) + 32
