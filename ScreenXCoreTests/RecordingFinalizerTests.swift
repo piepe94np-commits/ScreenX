@@ -112,6 +112,51 @@ struct RecordingFinalizerTests {
         #expect(abs(try await asset.load(.duration).seconds - 2) <= 0.1)
     }
 
+    /// Peak level of a decoded audio track (0…1).
+    private func peak(of track: AVAssetTrack, in asset: AVAsset) throws -> Float {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsBigEndianKey: false,
+        ])
+        reader.add(output)
+        #expect(reader.startReading())
+        var peak: Float = 0
+        while let buffer = output.copyNextSampleBuffer() {
+            guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            let length = CMBlockBufferGetDataLength(block)
+            var data = [Float](repeating: 0, count: length / 4)
+            _ = data.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!) }
+            peak = max(peak, data.map(abs).max() ?? 0)
+        }
+        return peak
+    }
+
+    /// Both sources must be audible in the .mov and in the mixed .mp4 (interleaved and planar input,
+    /// the latter is what ScreenCaptureKit delivers).
+    @Test(arguments: [false, true])
+    func mixedAudioIsAudible(planar: Bool) async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mov = directory.appendingPathComponent("ScreenX Aufnahme 2026-11-23 um 10.00.00.mov")
+        let writer = try VideoFileWriter(url: mov, settings: settings(audioTracks: 2))
+        await SyntheticMedia.record(writer, from: 0, to: 2, fps: 30, audio: [.system, .microphone],
+                                    audioFormat: planar ? .planarStereo48k : .stereo48k,
+                                    frame: SyntheticMedia.solidRecording(width: width, height: height))
+        _ = try await writer.finish(stopAt: SyntheticMedia.hostTime(2))
+
+        let movAsset = AVURLAsset(url: mov)
+        let movTracks = try await movAsset.loadTracks(withMediaType: .audio)
+        try #require(movTracks.count == 2)
+        for track in movTracks { #expect(try peak(of: track, in: movAsset) > 0.05, "mov track silent") }
+
+        let mp4 = try await RecordingFinalizer.finalize(mov: mov)
+        let asset = AVURLAsset(url: mp4)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        try #require(tracks.count == 1)
+        #expect(try peak(of: tracks[0], in: asset) > 0.05, "mixed mp4 track silent")
+    }
+
     @Test func finalizeVideoOnly() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
