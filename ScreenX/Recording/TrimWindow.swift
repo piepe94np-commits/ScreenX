@@ -189,9 +189,27 @@ final class TrimWindowController: NSObject, NSWindowDelegate {
                 self.displaySize = info.displaySize
                 self.model.totalDuration = info.duration
                 self.model.end = info.duration
+                self.fitWindow(to: info.displaySize)
             }
             await self.beginTrimming()
         }
+    }
+
+    /// Passt das Fenster an das Seitenverhältnis des Videos an (höchstens 80 % des Bildschirms), damit
+    /// neben dem Bild keine großen leeren Flächen bleiben. Platz für die Player-Leiste und die Kürzen-Leiste
+    /// kommt unten dazu.
+    private func fitWindow(to videoSize: CGSize) {
+        guard videoSize.width > 0, videoSize.height > 0,
+              let screen = window.screen ?? NSScreen.main else { return }
+        let controls: CGFloat = 120
+        let limit = screen.visibleFrame.size
+        let maxVideo = CGSize(width: limit.width * 0.8, height: limit.height * 0.8 - controls)
+        let scale = min(1, maxVideo.width / videoSize.width, maxVideo.height / videoSize.height)
+        var content = CGSize(width: (videoSize.width * scale).rounded(), height: (videoSize.height * scale).rounded() + controls)
+        content.width = max(content.width, window.minSize.width)
+        content.height = max(content.height, window.minSize.height)
+        window.setContentSize(content)
+        window.center()
     }
 
     /// Wartet, bis der Player bereit ist, und startet den Trim-Modus. Geht das nicht, erscheint die
